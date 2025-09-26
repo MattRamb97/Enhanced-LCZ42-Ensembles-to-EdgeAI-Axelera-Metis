@@ -1,15 +1,15 @@
-% RAND_DENSENET  Train DenseNet201 on random 3-band patches with upgrades.
+% ENSEMBLESARCHANNEL_DENSENET  Train DenseNet201 on SAR patches with upgrades.
 %
 % Usage:
-%   cfg.trainTable = trainTable;   % table with Path,Label,CityID,Modality='MS'
+%   cfg.trainTable = trainTable;   % table with Path,Label,CityID,Modality='SAR'
 %   cfg.testTable  = testTable;
 %   [dsTrain, dsCal, dsTest, info] = DatasetReading(cfg);
 %   cfg.dsTrain = dsTrain; cfg.dsCal = dsCal; cfg.dsTest = dsTest; cfg.info = info;
-%   results = Rand_DenseNet(cfg);
+%   results = ensembleSARchannel_DenseNet(cfg);
 %
 % Matteo Rambaldi — Thesis utilities
 
-function results = Rand_DenseNet(cfg)
+function results = esembleSARchannel_DenseNet(cfg)
 
 arguments
     cfg struct
@@ -20,11 +20,12 @@ dsCal   = cfg.dsCal;
 dsTest  = cfg.dsTest;
 info    = cfg.info;
 
-numClasses   = info.numClasses;
+numClasses = info.numClasses;
 classWeights = info.classWeights;
-inputSize    = [32 32 3]; % random 3-band
 
-%% 1) Define DenseNet201 backbone
+inputSize = [32 32 3]; % each SAR sample is preprocessed into RGB-like triplets
+
+%% 1) Define network (DenseNet201 pretrained on ImageNet)
 lgraph = layerGraph(densenet201);
 newFCLayer = fullyConnectedLayer(numClasses,'Name','fc_final');
 newSoftmax = softmaxLayer('Name','softmax');
@@ -36,7 +37,7 @@ lgraph = replaceLayer(lgraph,'ClassificationLayer_fc1000',newClass);
 
 net = dlnetwork(lgraph);
 
-%% 2) Training parameters
+%% 2) Training hyperparameters
 maxEpochs   = cfgArg(cfg,'maxEpochs',25);
 miniBatchSz = cfgArg(cfg,'miniBatchSize',64);
 lrMax       = cfgArg(cfg,'learnRateMax',1e-3);
@@ -48,44 +49,57 @@ mbq = minibatchqueue(dsTrain, ...
     'MiniBatchFcn',@(s) preprocessBatch(s,numClasses), ...
     'MiniBatchFormat',{'SSCB',''});
 
-%% 3) Train loop with cosine LR + EMA
+%% 3) Training loop with cosine LR + EMA
 trLoss = []; valAcc = [];
 emaNet = initEMA(net);
 
 for epoch = 1:maxEpochs
     lr = cosineLR(epoch,maxEpochs,lrMax,lrMin);
-    iteration = 0; reset(mbq)
+    iteration = 0;
+    reset(mbq)
     while hasdata(mbq)
         iteration = iteration + 1;
         [X,T] = next(mbq);
 
+        % forward + loss
         [loss, grads] = dlfeval(@modelGradients, net, X, T);
-        net = adamupdate(net, grads, iteration, lr);
+        net = adamupdate(net, grads, ...
+            iteration, lr);
 
+        % update EMA
         emaNet = updateEMA(emaNet, net, emaDecay);
+
         trLoss(end+1) = double(gather(extractdata(loss)));
     end
+
+    % simple validation acc on CAL split
     valAcc(end+1) = evaluateAccuracy(net, dsCal, numClasses);
     fprintf('Epoch %d/%d | LR %.1e | TrainLoss %.4f | ValAcc %.3f\n', ...
         epoch, maxEpochs, lr, mean(trLoss(end-iteration+1:end)), valAcc(end));
 end
 
-% Swap in EMA weights
+% Swap in EMA weights for final model
 net = swapEMA(net, emaNet);
 
 %% 4) Evaluation on TEST
 [probs, yTrue] = forwardDatastore(net, dsTest, numClasses);
 
+% Hard predictions
 [~,yPred] = max(probs,[],2);
 yPred = categorical(yPred,1:numClasses,info.classes);
 
+% Confusion matrix
 figure; confusionchart(yTrue,yPred,'Normalization','row-normalized');
 
+% ROC/PR curves
 metrics = perClassROC(yTrue,probs,info.classes);
 
+% Calibration with temperature scaling
 T = temperatureScale(logit(probs), yTrue);
 probsCal = softmax(logit(probs)/T);
 plotReliability(probsCal,yTrue);
+
+% Rejection curve
 plotRejection(probsCal,yTrue);
 
 %% 5) Output struct
@@ -96,7 +110,9 @@ results.temperature = T;
 
 end
 
-% ============================= HELPERS =============================
+% =====================================================================
+%                           Helper functions
+% =====================================================================
 
 function [loss,grads] = modelGradients(net,X,T)
 Y = forward(net,X);
@@ -106,13 +122,13 @@ end
 
 function [X,T] = preprocessBatch(samples,numClasses)
 X = cat(4,samples{:}.X);
-X = single(X)/255;
+X = single(X)/255; % rescale if needed
 T = onehotencode(categorical({samples{:}.Label}),1,'ClassNames',1:numClasses);
 X = dlarray(gpuArray(X),'SSCB');
 T = dlarray(gpuArray(T));
 end
 
-function lr = cosineLR(epoch,maxEpochs,lrMax,lrMin)
+function lr = cosineLR(epoch, maxEpochs, lrMax, lrMin)
 lr = lrMin + 0.5*(lrMax-lrMin)*(1+cos(pi*epoch/maxEpochs));
 end
 
@@ -123,7 +139,8 @@ acc = mean(double(yp)==grp2idx(yTrue));
 end
 
 function [probs, yTrue] = forwardDatastore(net, ds, numClasses)
-reset(ds); probs = []; yTrue = [];
+reset(ds);
+probs = []; yTrue = [];
 while hasdata(ds)
     s = read(ds);
     X = single(s.X)/255;
@@ -170,24 +187,27 @@ P = expZ ./ sum(expZ,2);
 end
 
 function T = temperatureScale(logits,yTrue)
+classes = unique(yTrue);
 yIdx = grp2idx(yTrue);
 nll = @(T) -mean(log( softmax(logits/T)(sub2ind(size(logits),1:numel(yIdx),yIdx')) + 1e-12 ));
 T = fminbnd(nll,0.5,5);
 end
 
 function plotReliability(probs,yTrue)
-M = 15;
+% Expected Calibration Error plot
+M = 15; % bins
 [yProb,yPred] = max(probs,[],2);
 acc = (yPred==grp2idx(yTrue));
 edges = linspace(0,1,M+1);
 [~,~,bin] = histcounts(yProb,edges);
 binAcc = accumarray(bin,acc,[M 1],@mean,NaN);
 binConf= accumarray(bin,yProb,[M 1],@mean,NaN);
-figure; bar(binConf,binAcc-binConf);
-ylabel('Gap (acc - conf)'); xlabel('Confidence'); title('Reliability Diagram');
+figure; bar(binConf,binAcc-binConf); ylabel('Gap (acc - conf)'); xlabel('Confidence');
+title('Reliability Diagram');
 end
 
 function plotRejection(probs,yTrue)
+% accuracy vs coverage by rejecting low-margin samples
 [sortedMargin,idx] = sort(maxk(probs,2,2), 'descend');
 pred = idx(:,1);
 trueIdx = grp2idx(yTrue);
@@ -197,5 +217,6 @@ for t = linspace(0,0.5,20)
     accs(end+1) = mean(pred(keep)==trueIdx(keep));
     covs(end+1) = mean(keep);
 end
-figure; plot(covs,accs,'-o'); xlabel('Coverage'); ylabel('Accuracy'); title('Rejection curve');
+figure; plot(covs,accs,'-o'); xlabel('Coverage'); ylabel('Accuracy');
+title('Rejection curve');
 end
