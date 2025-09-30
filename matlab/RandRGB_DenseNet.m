@@ -1,201 +1,166 @@
-% RANDRGB_DENSENET  Train DenseNet201 on RandRGB 3-band images with upgrades.
+% RANDRGB_DENSENET
+% Sentinel-2 (MS) DenseNet201 ensemble.
+% Each member uses a 3-band input drawn at random from 10 bands,
+% with at least ONE band forced to be an RGB band (B2,B3,B4 = indices 1..3).
 %
-% Usage:
-%   cfg.trainTable = trainTable;   % table with Path,Label,CityID,Modality='MS'
-%   cfg.testTable  = testTable;
-%   [dsTrain, dsCal, dsTest, info] = DatasetReading(cfg);
-%   cfg.dsTrain = dsTrain; cfg.dsCal = dsCal; cfg.dsTest = dsTest; cfg.info = info;
-%   results = RandRGB_DenseNet(cfg);
+% Required cfgT fields: dsTrain, dsCal, dsTest, info
+% Optional: numMembers(10), maxEpochs(7), miniBatchSize(50), learnRate(1e-3),
+%           rngSeed(1337), plots("none"|"training-progress")
 %
 % Matteo Rambaldi — Thesis utilities
 
-function results = RandRGB_DenseNet(cfg)
+function res = RandRGB_DenseNet(cfgT)
 
-arguments
-    cfg struct
-end
-
-dsTrain = cfg.dsTrain;
-dsCal   = cfg.dsCal;
-dsTest  = cfg.dsTest;
-info    = cfg.info;
-
-numClasses   = info.numClasses;
-classWeights = info.classWeights;
-inputSize    = [32 32 3];
-
-%% 1) Define DenseNet201 backbone
-lgraph = layerGraph(densenet201);
-newFCLayer = fullyConnectedLayer(numClasses,'Name','fc_final');
-newSoftmax = softmaxLayer('Name','softmax');
-newClass   = smoothCrossEntropy('sce',0.05,classWeights);
-
-lgraph = replaceLayer(lgraph,'fc1000',newFCLayer);
-lgraph = replaceLayer(lgraph,'fc1000_softmax',newSoftmax);
-lgraph = replaceLayer(lgraph,'ClassificationLayer_fc1000',newClass);
-
-net = dlnetwork(lgraph);
-
-%% 2) Training parameters
-maxEpochs   = cfgArg(cfg,'maxEpochs',25);
-miniBatchSz = cfgArg(cfg,'miniBatchSize',64);
-lrMax       = cfgArg(cfg,'learnRateMax',1e-3);
-lrMin       = cfgArg(cfg,'learnRateMin',1e-5);
-emaDecay    = 0.999;
-
-mbq = minibatchqueue(dsTrain, ...
-    'MiniBatchSize',miniBatchSz, ...
-    'MiniBatchFcn',@(s) preprocessBatch(s,numClasses), ...
-    'MiniBatchFormat',{'SSCB',''});
-
-%% 3) Train loop with cosine LR + EMA
-trLoss = []; valAcc = [];
-emaNet = initEMA(net);
-
-for epoch = 1:maxEpochs
-    lr = cosineLR(epoch,maxEpochs,lrMax,lrMin);
-    iteration = 0; reset(mbq)
-    while hasdata(mbq)
-        iteration = iteration + 1;
-        [X,T] = next(mbq);
-
-        [loss, grads] = dlfeval(@modelGradients, net, X, T);
-        net = adamupdate(net, grads, iteration, lr);
-
-        emaNet = updateEMA(emaNet, net, emaDecay);
-        trLoss(end+1) = double(gather(extractdata(loss)));
+    gpuDevice(1);
+    
+    % ---------- config ----------
+    dsTrain = must(cfgT,'dsTrain');
+    dsCal   = must(cfgT,'dsCal');
+    dsTest  = must(cfgT,'dsTest');
+    info    = must(cfgT,'info');
+    
+    numMembers    = getf(cfgT,'numMembers',10);
+    maxEpochs     = getf(cfgT,'maxEpochs',7);
+    miniBatchSize = getf(cfgT,'miniBatchSize',50);
+    learnRate     = getf(cfgT,'learnRate',1e-3);
+    rngSeed       = getf(cfgT,'rngSeed',1337);
+    plotsOpt      = string(getf(cfgT,'plots',"none"));
+    
+    classes    = string(info.classes);
+    numClasses = numel(classes);
+    
+    % ---------- backbone & head ----------
+    netBase = densenet201;                  % requires Deep Learning Toolbox Model for DenseNet
+    inSz    = netBase.Layers(1).InputSize;  % e.g., [224 224 3]
+    assert(inSz(3)==3,'Network must accept 3 channels.');
+    
+    lgraph = layerGraph(netBase);
+    lgraph = replaceLayer(lgraph,'fc1000',fullyConnectedLayer(numClasses,'Name','fc', ...
+                        'WeightLearnRateFactor',20,'BiasLearnRateFactor',20));
+    lgraph = replaceLayer(lgraph,'fc1000_softmax',softmaxLayer('Name','softmax'));
+    lgraph = replaceLayer(lgraph,'ClassificationLayer_fc1000',classificationLayer('Name','classoutput'));
+    
+    % ---------- training options ----------
+    opts = trainingOptions('sgdm', ...
+        'MaxEpochs',maxEpochs, ...
+        'MiniBatchSize',miniBatchSize, ...
+        'InitialLearnRate',learnRate, ...
+        'Shuffle','every-epoch', ...
+        'ValidationData',[], ...
+        'ExecutionEnvironment','auto', ...
+        'Verbose',false, ...
+        'Plots',plotsOpt);
+    
+    rng(rngSeed,'twister');
+    
+    % ---------- train ensemble ----------
+    members(numMembers) = struct('net',[],'bands',[],'valAcc',NaN);
+    for m = 1:numMembers
+        fprintf('[MS-RGB] Member %02d/%02d\n', m, numMembers);
+    
+        % 3 random bands out of 10, then force at least one RGB band (1..3)
+        bands = randperm(10,3);
+        rgbChoice = randi(3);          % 1=B2, 2=B3, 3=B4 in our band order
+        slot      = randi(3);          % which of the 3 positions to overwrite
+        bands(slot) = rgbChoice;       % enforce presence of a true RGB band
+        bands = uniqueBandsKeepSize(bands);  % ensure 3 distinct indices
+    
+        % member-specific views: slice bands, resize, yield {input,response}
+        dsTrM  = toNetTableMS(dsTrain, bands, inSz(1:2));
+        dsCalM = toNetTableMS(dsCal,   bands, inSz(1:2));
+        dsTeM  = toNetTableMS(dsTest,  bands, inSz(1:2));
+    
+        % validation
+        opts.ValidationData     = dsCalM;
+        opts.ValidationFrequency = 200;
+        opts.ValidationPatience  = 6;
+    
+        % train
+        netM = trainNetwork(dsTrM, lgraph, opts);
+    
+        % quick val acc
+        Yv = classify(netM, dsCalM, 'MiniBatchSize', miniBatchSize);
+        Tv = gatherResponses(dsCalM);
+        members(m).valAcc = mean(Yv==Tv);
+        members(m).net    = netM;
+        members(m).bands  = bands;
+    
+        fprintf('  bands = [%d %d %d], val acc = %.4f\n', bands, members(m).valAcc);
     end
-    valAcc(end+1) = evaluateAccuracy(net, dsCal, numClasses);
-    fprintf('Epoch %d/%d | LR %.1e | TrainLoss %.4f | ValAcc %.3f\n', ...
-        epoch, maxEpochs, lr, mean(trLoss(end-iteration+1:end)), valAcc(end));
+    
+    % ---------- evaluate: average softmax across members ----------
+    fprintf('[MS-RGB] Evaluating ensemble on TEST...\n');
+    scoresList = cell(numMembers,1);
+    for m = 1:numMembers
+        dsTeM = toNetTableMS(dsTest, members(m).bands, inSz(1:2));
+        [~, S] = classify(members(m).net, dsTeM, 'MiniBatchSize', miniBatchSize);
+        scoresList{m} = S;  % N x K
+    end
+    
+    N = size(scoresList{1},1);
+    K = size(scoresList{1},2);
+    Ssum = zeros(N,K,'single');
+    for m = 1:numMembers, Ssum = Ssum + scoresList{m}; end
+    Savg = Ssum / numMembers;
+    
+    [~, idx] = max(Savg,[],2);
+    % label stream (order) is the same for all members
+    yTrue = gatherResponses(toNetTableMS(dsTest, members(1).bands, inSz(1:2)));
+    yPred = categorical(idx, 1:K, categories(yTrue));
+    
+    top1 = mean(yPred==yTrue);
+    C    = confusionmat(yTrue, yPred, 'Order', categorical(classes));
+    fprintf('  Test Top-1 = %.4f\n', top1);
+    
+    % ---------- pack ----------
+    res = struct();
+    res.members      = members;
+    res.testTop1     = top1;
+    res.confusionMat = C;
+    res.classes      = classes;
+    res.scoresAvg    = Savg;     % N x K
+    res.yTrue        = yTrue;
+    res.yPred        = yPred;
 end
 
-% Swap in EMA weights
-net = swapEMA(net, emaNet);
+% ================= helpers =================
+function v = must(S,f), assert(isfield(S,f),'Missing cfgT.%s',f); v=S.(f); end
+function v = getf(S,f,d), if isfield(S,f), v=S.(f); else, v=d; end, end
 
-%% 4) Evaluation on TEST
-[probs, yTrue] = forwardDatastore(net, dsTest, numClasses);
-
-[~,yPred] = max(probs,[],2);
-yPred = categorical(yPred,1:numClasses,info.classes);
-
-figure; confusionchart(yTrue,yPred,'Normalization','row-normalized');
-
-metrics = perClassROC(yTrue,probs,info.classes);
-
-T = temperatureScale(logit(probs), yTrue);
-probsCal = softmax(logit(probs)/T);
-plotReliability(probsCal,yTrue);
-plotRejection(probsCal,yTrue);
-
-%% 5) Output struct
-results.net   = net;
-results.info  = info;
-results.metrics = metrics;
-results.temperature = T;
-
+function bands = uniqueBandsKeepSize(bands)
+    % Ensure 3 distinct indices in 1..10
+    bands = unique(bands,'stable');
+    while numel(bands) < 3
+        cand = randi(10);
+        if ~ismember(cand, bands)
+            bands(end+1) = cand; %#ok<AGROW>
+        end
+    end
 end
 
-% ============================= HELPERS =============================
-
-function [loss,grads] = modelGradients(net,X,T)
-Y = forward(net,X);
-loss = crossentropy(Y,T,'TargetCategories','independent');
-grads = dlgradient(loss, net.Learnables);
+function dsOut = toNetTableMS(dsIn, bands3, hw)
+    assert(numel(bands3)==3,'bands3 must have 3 indices.');
+    fn = @(s) toRowMS(s, bands3, hw);
+    dsOut = transform(dsIn, fn);
 end
 
-function [X,T] = preprocessBatch(samples,numClasses)
-X = cat(4,samples{:}.X);
-X = single(X)/255;
-T = onehotencode(categorical({samples{:}.Label}),1,'ClassNames',1:numClasses);
-X = dlarray(gpuArray(X),'SSCB');
-T = dlarray(gpuArray(T));
+function T = toRowMS(sample, bands3, hw)
+    % sample.X: [H W 10] single in [0,255] (scaled in DatasetReading)
+    X = sample.X;
+    assert(size(X,3) >= max(bands3), 'Sample has %d channels, asked for band %d.', size(X,3), max(bands3));
+    X3 = X(:,:,bands3);
+    if size(X3,1)~=hw(1) || size(X3,2)~=hw(2)
+        X3 = imresize(X3, hw, 'bilinear');
+    end
+    T = table({X3}, categorical(sample.Label), 'VariableNames', {'input','response'});
 end
 
-function lr = cosineLR(epoch,maxEpochs,lrMax,lrMin)
-lr = lrMin + 0.5*(lrMax-lrMin)*(1+cos(pi*epoch/maxEpochs));
-end
-
-function acc = evaluateAccuracy(net, ds, numClasses)
-[probs, yTrue] = forwardDatastore(net, ds, numClasses);
-[~,yp] = max(probs,[],2);
-acc = mean(double(yp)==grp2idx(yTrue));
-end
-
-function [probs, yTrue] = forwardDatastore(net, ds, numClasses)
-reset(ds); probs = []; yTrue = [];
-while hasdata(ds)
-    s = read(ds);
-    X = single(s.X)/255;
-    X = dlarray(gpuArray(X),'SSCB');
-    Y = predict(net,X);
-    probs(end+1,:) = gather(extractdata(Y))'; %#ok<AGROW>
-    yTrue(end+1,1) = s.Label; %#ok<AGROW>
-end
-end
-
-function ema = initEMA(net)
-p = net.Learnables;
-ema = table(p.Layer,p.Parameter,p.Value,'VariableNames',["Layer","Parameter","Value"]);
-end
-function ema = updateEMA(ema, net, decay)
-p = net.Learnables;
-for i=1:height(p)
-    ema.Value{i} = decay*ema.Value{i} + (1-decay)*p.Value{i};
-end
-end
-function net = swapEMA(net, ema)
-for i=1:height(ema)
-    idx = strcmp(net.Learnables.Layer, ema.Layer{i}) & ...
-          strcmp(net.Learnables.Parameter, ema.Parameter{i});
-    net.Learnables.Value(idx) = ema.Value(i);
-end
-end
-
-function m = perClassROC(yTrue,probs,classes)
-m = struct();
-for c = 1:numel(classes)
-    [X,Y,~,AUC] = perfcurve(yTrue==classes(c),probs(:,c),true);
-    m.(classes{c}).FPR = X; m.(classes{c}).TPR = Y; m.(classes{c}).AUC = AUC;
-end
-end
-
-function Z = logit(P)
-Z = log(max(P,1e-9)) - log(max(1-P,1e-9));
-end
-
-function P = softmax(Z)
-expZ = exp(Z - max(Z,[],2));
-P = expZ ./ sum(expZ,2);
-end
-
-function T = temperatureScale(logits,yTrue)
-yIdx = grp2idx(yTrue);
-nll = @(T) -mean(log( softmax(logits/T)(sub2ind(size(logits),1:numel(yIdx),yIdx')) + 1e-12 ));
-T = fminbnd(nll,0.5,5);
-end
-
-function plotReliability(probs,yTrue)
-M = 15;
-[yProb,yPred] = max(probs,[],2);
-acc = (yPred==grp2idx(yTrue));
-edges = linspace(0,1,M+1);
-[~,~,bin] = histcounts(yProb,edges);
-binAcc = accumarray(bin,acc,[M 1],@mean,NaN);
-binConf= accumarray(bin,yProb,[M 1],@mean,NaN);
-figure; bar(binConf,binAcc-binConf);
-ylabel('Gap (acc - conf)'); xlabel('Confidence'); title('Reliability Diagram');
-end
-
-function plotRejection(probs,yTrue)
-[sortedMargin,idx] = sort(maxk(probs,2,2), 'descend');
-pred = idx(:,1);
-trueIdx = grp2idx(yTrue);
-accs = []; covs = [];
-for t = linspace(0,0.5,20)
-    keep = sortedMargin(:,1)-sortedMargin(:,2) >= t;
-    accs(end+1) = mean(pred(keep)==trueIdx(keep));
-    covs(end+1) = mean(keep);
-end
-figure; plot(covs,accs,'-o'); xlabel('Coverage'); ylabel('Accuracy'); title('Rejection curve');
+function Y = gatherResponses(dsTbl)
+    reset(dsTbl);
+    Y = categorical.empty(0,1);
+    while hasdata(dsTbl)
+        t = read(dsTbl);
+        Y(end+1,1) = t.response; %#ok<AGROW>
+    end
+    reset(dsTbl);
 end
