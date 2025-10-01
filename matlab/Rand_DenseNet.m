@@ -9,8 +9,6 @@
 % Matteo Rambaldi — Thesis utilities
 
 function res = Rand_DenseNet(cfgT)
-
-    gpuDevice(1);
     
     % ---------- config ----------
     dsTrain = must(cfgT,'dsTrain');

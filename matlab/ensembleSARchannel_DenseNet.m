@@ -15,8 +15,6 @@
 % Matteo Rambaldi — Thesis utilities
 
 function res = ensembleSARchannel_DenseNet(cfgT)
-
-    gpuDevice(1);
     
     % ---------- read config ----------
     dsTrain = must(cfgT,'dsTrain');   % TransformedDatastore from DatasetReading
