@@ -34,7 +34,7 @@
 %
 % Matteo Rambaldi — Thesis utilities
 
-function [dsTrain, dsCal, dsTest, info] = DatasetReading(cfg)
+function [dsTrain, dsTest, info] = DatasetReading(cfg)
 
     arguments
         cfg struct
@@ -46,6 +46,7 @@ function [dsTrain, dsCal, dsTest, info] = DatasetReading(cfg)
     trainT = cfgArg(cfg,'trainTable',[]);
     testT  = cfgArg(cfg,'testTable',[]);
     assert(~isempty(trainT) && ~isempty(testT), 'cfg.trainTable and cfg.testTable are required.');
+
     assert(all(ismember({'Path','Label','Index','Modality'}, trainT.Properties.VariableNames)), ...
            'trainTable must have Path, Label, Index, Modality.');
     assert(all(ismember({'Path','Label','Index','Modality'}, testT.Properties.VariableNames)), ...
@@ -61,37 +62,21 @@ function [dsTrain, dsCal, dsTest, info] = DatasetReading(cfg)
     useZS    = cfgArg(cfg,'useZscore',false);
     useSARdn = cfgArg(cfg,'useSARdespeckle',false);
     useAug   = cfgArg(cfg,'useAugmentation',false);   % baseline-first
-    calFrac  = cfgArg(cfg,'calibrationFrac',0.08);
     
     rd = cfgArg(cfg,'reader',struct('type','custom'));
     rd.type      = cfgArg(rd,'type','custom');
-    rd.field     = cfgArg(rd,'field','patch');
     rd.customFcn = cfgArg(rd,'customFcn',[]);
     
-    % ------------------ 1) Class-stratified CAL split ------------------
-    isCal = false(height(trainT),1);
-    for c = 1:numClasses
-        idx = find(trainT.Label == classes{c});
-        if isempty(idx), continue; end
-        k = max(1, round(calFrac * numel(idx)));
-        k = min(k, numel(idx));                   % cap for tiny classes
-        pick = randsample(idx, k);
-        isCal(pick) = true;
-    end
-    calT   = trainT(isCal, :);
-    trainT = trainT(~isCal, :);
-    
-    % ------------------ 2) Row-wise datastores via arrayDatastore+transform ------------------
+    % ------------------ 1) Row-wise datastores via arrayDatastore+transform ------------------
     rawTrain = tableDatastore(trainT, rd);
-    rawCal   = tableDatastore(calT,   rd);
     rawTest  = tableDatastore(testT,  rd);
     
-    % ------------------ 3) Per-channel μ/σ on TRAIN (after paper scaling) ------------------
+    % ------------------ 2) Per-channel μ/σ on TRAIN (after paper scaling) ------------------
     fprintf('[DatasetReading] Computing per-channel μ/σ on TRAIN...\n');
     [mu, sigma, numCh] = computeBandStats(rawTrain, inSize);
     fprintf('  -> Channels: %d | μ/σ computed.\n', numCh);
     
-    % ------------------ 4) Preprocessing pipeline ------------------
+    % ------------------ 3) Preprocessing pipeline ------------------
     pp = struct();
     pp.msRange   = [0 2.8];
     pp.sarClip   = 0.5;
@@ -108,24 +93,18 @@ function [dsTrain, dsCal, dsTest, info] = DatasetReading(cfg)
     if useAug, aug = @(s) augmentAligned(s); end
     
     dsTrain = transform(rawTrain, @(s) aug(preproc(s)));
-    dsCal   = transform(rawCal,   preproc);
     dsTest  = transform(rawTest,  preproc);
     
-    % ------------------ 5) Class weights (inverse frequency on TRAIN) ------------------
-    cw = classWeightsFromLabels(trainT.Label, classes);
-    
-    % ------------------ 6) Info ------------------
+    % ------------------ 4) Info ------------------
     info = struct();
     info.numClasses   = numClasses;
     info.classes      = classes;
     info.mu           = mu;
     info.sigma        = sigma;
-    info.classWeights = cw;
-    info.reader       = rd;
     info.inputSize    = inSize;
     
-    fprintf('[DatasetReading] Done. TRAIN %d | CAL %d | TEST %d.\n', ...
-            height(trainT), height(calT), height(testT));
+    fprintf('[DatasetReading] Done. TRAIN %d | TEST %d.\n', ...
+            height(trainT), height(testT));
 end
 
 % ======================================================================
@@ -255,10 +234,4 @@ function out = augmentAligned(sample)
     end
     sample.X = X;
     out = sample;
-end
-
-function cw = classWeightsFromLabels(lbl, classes)
-    cnt = countcats(categorical(lbl, classes));
-    w = sum(cnt) ./ max(cnt,1);
-    cw = double(w / mean(w));
 end

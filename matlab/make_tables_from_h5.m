@@ -17,31 +17,26 @@ function make_tables_from_h5(root)
     end
     
     tr = fullfile(root,'training.h5');
-    va = fullfile(root,'validation.h5');
     te = fullfile(root,'testing.h5');
     assert(isfile(tr) && isfile(va) && isfile(te), 'Missing H5 files in %s', root);
     
     % --- read counts and labels (labels are one-hot N x 17) ---
     [Ntr, lab_tr] = getN_and_labels(tr);
-    [Nva, lab_va] = getN_and_labels(va);
     [Nte, lab_te] = getN_and_labels(te);
     
     % --- build Sentinel-2 (MS) tables ---
     train_MS = table(repmat(string(tr),Ntr,1), lab_tr, (1:Ntr)', repmat("MS",Ntr,1), ...
-        'VariableNames',{'Path','Label','Index','Modality'});
-    val_MS   = table(repmat(string(va),Nva,1), lab_va, (1:Nva)', repmat("MS",Nva,1), ...
         'VariableNames',{'Path','Label','Index','Modality'});
     test_MS  = table(repmat(string(te),Nte,1), lab_te, (1:Nte)', repmat("MS",Nte,1), ...
         'VariableNames',{'Path','Label','Index','Modality'});
     
     % --- build Sentinel-1 (SAR) tables (same rows; Modality changes) ---
     train_SAR = train_MS; train_SAR.Modality(:) = "SAR";
-    val_SAR   = val_MS;   val_SAR.Modality(:)   = "SAR";
     test_SAR  = test_MS;  test_SAR.Modality(:)  = "SAR";
     
     % --- save ---
-    save(fullfile(root,'tables_MS.mat'),'train_MS','val_MS','test_MS','-v7.3');
-    save(fullfile(root,'tables_SAR.mat'),'train_SAR','val_SAR','test_SAR','-v7.3');
+    save(fullfile(root,'tables_MS.mat'),'train_MS','test_MS','-v7.3');
+    save(fullfile(root,'tables_SAR.mat'),'train_SAR','test_SAR','-v7.3');
     
     fprintf('Saved:\n  %s\n  %s\n', fullfile(root,'tables_MS.mat'), fullfile(root,'tables_SAR.mat'));
 end

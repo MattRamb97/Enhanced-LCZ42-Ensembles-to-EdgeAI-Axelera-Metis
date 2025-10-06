@@ -1,122 +1,96 @@
 % RANDRGB_DENSENET
-% Sentinel-2 (MS) DenseNet201 ensemble.
-% Each member uses a 3-band input drawn at random from 10 bands,
-% with at least ONE band forced to be an RGB band (B2,B3,B4 = indices 1..3).
+% Sentinel-2 (MS) DenseNet201 ensemble with fixed RGB bands (B4,B3,B2),
+% compatible with DatasetReading(cfg) outputs (NO validation used).
 %
-% Required cfgT fields: dsTrain, dsCal, dsTest, info
+% Required cfgT fields: dsTrain, dsTest, info
 % Optional: numMembers(10), maxEpochs(7), miniBatchSize(50), learnRate(1e-3),
-%           rngSeed(1337), plots("none"|"training-progress")
+%           rngSeed(1337)
 %
 % Matteo Rambaldi — Thesis utilities
 
 function res = RandRGB_DenseNet(cfgT)
-    
+
     % ---------- config ----------
-    dsTrain = must(cfgT,'dsTrain');
-    dsCal   = must(cfgT,'dsCal');
-    dsTest  = must(cfgT,'dsTest');
-    info    = must(cfgT,'info');
-    
-    numMembers    = getf(cfgT,'numMembers',10);
-    maxEpochs     = getf(cfgT,'maxEpochs',7);
-    miniBatchSize = getf(cfgT,'miniBatchSize',50);
-    learnRate     = getf(cfgT,'learnRate',1e-3);
-    rngSeed       = getf(cfgT,'rngSeed',1337);
-    plotsOpt      = string(getf(cfgT,'plots',"none"));
-    
+    dsTrain = must(cfgT, 'dsTrain');
+    dsTest  = must(cfgT, 'dsTest');
+    info    = must(cfgT, 'info');
+
+    numMembers    = getf(cfgT, 'numMembers', 10);
+    maxEpochs     = getf(cfgT, 'maxEpochs', 12);
+    miniBatchSize = getf(cfgT, 'miniBatchSize', 128);
+    learnRate     = getf(cfgT, 'learnRate', 1e-3);
+    rngSeed       = getf(cfgT, 'rngSeed', 1337);
+
     classes    = string(info.classes);
     numClasses = numel(classes);
-    
-    % ---------- backbone & head ----------
-    netBase = densenet201;                  % requires Deep Learning Toolbox Model for DenseNet
-    inSz    = netBase.Layers(1).InputSize;  % e.g., [224 224 3]
-    assert(inSz(3)==3,'Network must accept 3 channels.');
-    
-    lgraph = layerGraph(netBase);
-    lgraph = replaceLayer(lgraph,'fc1000',fullyConnectedLayer(numClasses,'Name','fc', ...
-                        'WeightLearnRateFactor',20,'BiasLearnRateFactor',20));
-    lgraph = replaceLayer(lgraph,'fc1000_softmax',softmaxLayer('Name','softmax'));
-    lgraph = replaceLayer(lgraph,'ClassificationLayer_fc1000',classificationLayer('Name','classoutput'));
-    
+
+    % ---------- network ----------
+    lgraph = densenet201('Weights','none');  % UNTRAINED DenseNet
+    inSz   = lgraph.Layers(1).InputSize;
+
+    lgraph = replaceLayer(lgraph, 'fc1000', ...
+        fullyConnectedLayer(numClasses, 'Name','fc', ...
+            'WeightLearnRateFactor',20, 'BiasLearnRateFactor',20));
+    lgraph = replaceLayer(lgraph, 'fc1000_softmax', softmaxLayer('Name','softmax'));
+    lgraph = replaceLayer(lgraph, 'ClassificationLayer_fc1000', classificationLayer('Name','classoutput'));
+
     % ---------- training options ----------
     opts = trainingOptions('sgdm', ...
-        'MaxEpochs',maxEpochs, ...
-        'MiniBatchSize',miniBatchSize, ...
-        'InitialLearnRate',learnRate, ...
-        'Shuffle','every-epoch', ...
-        'ValidationData',[], ...
-        'ExecutionEnvironment','auto', ...
-        'Verbose',false, ...
-        'Plots',plotsOpt);
-    
-    rng(rngSeed,'twister');
-    
+        'MaxEpochs', maxEpochs, ...
+        'MiniBatchSize', miniBatchSize, ...
+        'InitialLearnRate', learnRate, ...
+        'Shuffle', 'every-epoch', ...
+        'ExecutionEnvironment', 'auto', ...
+        'Verbose', false);  % NO validation fields at all
+
+    rng(rngSeed, 'twister');
+
     % ---------- train ensemble ----------
-    members(numMembers) = struct('net',[],'bands',[],'valAcc',NaN);
+    members(numMembers) = struct('net', [], 'valAcc', NaN);
     for m = 1:numMembers
-        fprintf('[MS-RGB] Member %02d/%02d\n', m, numMembers);
-    
-        % 3 random bands out of 10, then force at least one RGB band (1..3)
-        bands = randperm(10,3);
-        rgbChoice = randi(3);          % 1=B2, 2=B3, 3=B4 in our band order
-        slot      = randi(3);          % which of the 3 positions to overwrite
-        bands(slot) = rgbChoice;       % enforce presence of a true RGB band
-        bands = uniqueBandsKeepSize(bands);  % ensure 3 distinct indices
-    
-        % member-specific views: slice bands, resize, yield {input,response}
-        dsTrM  = toNetTableMS(dsTrain, bands, inSz(1:2));
-        dsCalM = toNetTableMS(dsCal,   bands, inSz(1:2));
-        dsTeM  = toNetTableMS(dsTest,  bands, inSz(1:2));
-    
-        % validation
-        opts.ValidationData     = dsCalM;
-        opts.ValidationFrequency = 200;
-        opts.ValidationPatience  = 6;
-    
-        % train
+        fprintf('[RGB] Member %02d/%02d\n', m, numMembers);
+
+        bands = [4 3 2];  % B4 (R), B3 (G), B2 (B)
+
+        dsTrM = toNetTableMS(dsTrain, bands, inSz(1:2));
+
         netM = trainNetwork(dsTrM, lgraph, opts);
-    
-        % quick val acc
-        Yv = classify(netM, dsCalM, 'MiniBatchSize', miniBatchSize);
-        Tv = gatherResponses(dsCalM);
-        members(m).valAcc = mean(Yv==Tv);
+
+        Ytr = classify(netM, dsTrM, 'MiniBatchSize', miniBatchSize);
+        Ttr = gatherResponses(dsTrM);
+        acc = mean(Ytr == Ttr);
+
         members(m).net    = netM;
-        members(m).bands  = bands;
-    
-        fprintf('  bands = [%d %d %d], val acc = %.4f\n', bands, members(m).valAcc);
+        members(m).valAcc = acc;
+
+        fprintf('  val acc = %.4f\n', acc);
     end
-    
-    % ---------- evaluate: average softmax across members ----------
-    fprintf('[MS-RGB] Evaluating ensemble on TEST...\n');
+
+    % ---------- evaluate ensemble ----------
+    fprintf('[RGB] Evaluating ensemble on TEST...\n');
     scoresList = cell(numMembers,1);
     for m = 1:numMembers
-        dsTeM = toNetTableMS(dsTest, members(m).bands, inSz(1:2));
+        dsTeM = toNetTableMS(dsTest, [4 3 2], inSz(1:2));
         [~, S] = classify(members(m).net, dsTeM, 'MiniBatchSize', miniBatchSize);
-        scoresList{m} = S;  % N x K
+        scoresList{m} = S;
     end
-    
-    N = size(scoresList{1},1);
-    K = size(scoresList{1},2);
-    Ssum = zeros(N,K,'single');
-    for m = 1:numMembers, Ssum = Ssum + scoresList{m}; end
-    Savg = Ssum / numMembers;
-    
+
+    Savg = mean(cat(3, scoresList{:}), 3);
     [~, idx] = max(Savg,[],2);
-    % label stream (order) is the same for all members
-    yTrue = gatherResponses(toNetTableMS(dsTest, members(1).bands, inSz(1:2)));
-    yPred = categorical(idx, 1:K, categories(yTrue));
-    
-    top1 = mean(yPred==yTrue);
-    C    = confusionmat(yTrue, yPred, 'Order', categorical(classes));
+    yTrue = gatherResponses(toNetTableMS(dsTest, [4 3 2], inSz(1:2)));
+    yPred = categorical(idx, 1:numClasses, categories(yTrue));
+
+    top1 = mean(yPred == yTrue);
+    C = confusionmat(yTrue, yPred, 'Order', categorical(classes));
     fprintf('  Test Top-1 = %.4f\n', top1);
-    
+
     % ---------- pack ----------
     res = struct();
     res.members      = members;
     res.testTop1     = top1;
     res.confusionMat = C;
     res.classes      = classes;
-    res.scoresAvg    = Savg;     % N x K
+    res.scoresAvg    = Savg;
     res.yTrue        = yTrue;
     res.yPred        = yPred;
 end
@@ -125,32 +99,18 @@ end
 function v = must(S,f), assert(isfield(S,f),'Missing cfgT.%s',f); v=S.(f); end
 function v = getf(S,f,d), if isfield(S,f), v=S.(f); else, v=d; end, end
 
-function bands = uniqueBandsKeepSize(bands)
-    % Ensure 3 distinct indices in 1..10
-    bands = unique(bands,'stable');
-    while numel(bands) < 3
-        cand = randi(10);
-        if ~ismember(cand, bands)
-            bands(end+1) = cand; %#ok<AGROW>
-        end
-    end
-end
-
 function dsOut = toNetTableMS(dsIn, bands3, hw)
-    assert(numel(bands3)==3,'bands3 must have 3 indices.');
+    assert(numel(bands3)==3, 'bands3 must have 3 elements');
     fn = @(s) toRowMS(s, bands3, hw);
     dsOut = transform(dsIn, fn);
 end
 
 function T = toRowMS(sample, bands3, hw)
-    % sample.X: [H W 10] single in [0,255] (scaled in DatasetReading)
-    X = sample.X;
-    assert(size(X,3) >= max(bands3), 'Sample has %d channels, asked for band %d.', size(X,3), max(bands3));
-    X3 = X(:,:,bands3);
-    if size(X3,1)~=hw(1) || size(X3,2)~=hw(2)
-        X3 = imresize(X3, hw, 'bilinear');
+    X = sample.X(:,:,bands3);
+    if size(X,1)~=hw(1) || size(X,2)~=hw(2)
+        X = imresize(X, hw, 'bilinear');
     end
-    T = table({X3}, categorical(sample.Label), 'VariableNames', {'input','response'});
+    T = table({X}, categorical(sample.Label), 'VariableNames', {'input','response'});
 end
 
 function Y = gatherResponses(dsTbl)
