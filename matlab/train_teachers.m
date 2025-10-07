@@ -1,3 +1,29 @@
+% TRAIN_TEACHERS  Main training orchestrator for teacher ensembles.
+%
+% Trains one or more of the baseline ensembles using Sentinel-2 (MS)
+% or Sentinel-1 (SAR) modalities individually.
+%
+% Usage:
+%   train_teachers('RAND')     - Train random 3-band MS ensemble
+%   train_teachers('RANDRGB')  - Train RGB-only MS ensemble
+%   train_teachers('SAR')      - Train SAR-only ensemble (3 SAR bands)
+%   train_teachers('ALL')      - Train all of the above sequentially
+%
+% Assumes HDF5 tables are already saved in:
+%   data/lcz42/tables_MS.mat → train_MS, test_MS
+%   data/lcz42/tables_SAR.mat → train_SAR, test_SAR
+%
+% Outputs (in 'matlab/' folder):
+%   - resRand.mat
+%   - resRandRGB.mat
+%   - resSAR.mat
+%
+% NOTE:
+%   This version uses only one modality at a time for SAR (3 bands from SAR).
+%   Z-score normalization and augmentation are enabled by default.
+%
+% Author: Matteo Rambaldi — Thesis utilities
+
 function train_teachers(MODE)
     % MODE: 'RAND' | 'RANDRGB' | 'SAR' | 'ALL'
     if nargin<1, MODE = 'ALL'; end

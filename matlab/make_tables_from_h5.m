@@ -18,7 +18,7 @@ function make_tables_from_h5(root)
     
     tr = fullfile(root,'training.h5');
     te = fullfile(root,'testing.h5');
-    assert(isfile(tr) && isfile(va) && isfile(te), 'Missing H5 files in %s', root);
+    assert(isfile(tr) && isfile(te), 'Missing H5 files in %s', root);
     
     % --- read counts and labels (labels are one-hot N x 17) ---
     [Ntr, lab_tr] = getN_and_labels(tr);

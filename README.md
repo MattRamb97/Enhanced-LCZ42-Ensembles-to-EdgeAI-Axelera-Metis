@@ -22,6 +22,10 @@ Download: https://dataserv.ub.tum.de/index.php/s/m1483140
 
 ## Pipeline Overview
 
+## EnableGPU.m
+
+Utility to check and enable GPU usage. Automatically selects GPU if available.
+
 ##  h5_reader.m
 
 Returns a single patch from `/sen1` or `/sen2` as `[H W C]` single precision.
@@ -135,6 +139,45 @@ Same pipeline and structure, just fixed bands.
 
 ## ensembleSARchannel_DenseNet.m
 
+Trains DenseNet-201 ensemble on 3 SAR channel combinations.
+
+**Input:** Struct `cfgT` (same format)
+
+**Output:** Struct with ensemble results
+
+**Implementation:**
+- Randomly selects 3 bands from SAR
+
+## train_teachers_v2.m
+
+Main training orchestrator for training all ensembles using the updated _v2 models.
+
+**Usage:**
+```matlab
+train_teachers_v2('RAND')     % Train only multispectral random bands
+train_teachers_v2('RANDRGB')  % Train only RGB-constrained
+train_teachers_v2('SAR')      % Train MS+SAR (2+1) ensemble only
+train_teachers_v2('ALL')      % Train all three (sequential)
+```
+## Rand_DenseNet_v2.m
+
+Updated version of `Rand_DenseNet.m` that supports **pretrained DenseNet-201** loaded from a `.mat` file.  
+Use when `densenet201_pretrained.mat` is available and pretrained weights are desired.
+
+**Differences from `Rand_DenseNet.m`:**
+- Loads the network from `densenet201_pretrained.mat` instead of calling `densenet201('Weights','none')`
+- Everything else remains unchanged: each model uses a different random MS triplet.
+
+**Required:**  
+`.mat` file `matlab/densenet201_pretrained.mat`
+
+## RandRGB_DenseNet_v2.m
+
+Updated RGB-constrained ensemble with pretrained DenseNet-201 from densenet201_pretrained.mat.
+Functionally identical to RandRGB_DenseNet.m, but uses pretrained weights.
+
+## ensembleSARchannel_DenseNet_v2.m
+
 Trains DenseNet-201 ensemble on 2 MS + 1 SAR channel combinations.
 
 **Input:** Struct `cfgT` (same format)
@@ -144,12 +187,6 @@ Trains DenseNet-201 ensemble on 2 MS + 1 SAR channel combinations.
 **Implementation:**
 - Randomly selects 2 bands from MS and 1 from SAR
 - Concatenates into a 3-channel input
-
----
-
-## EnableGPU.m
-
-Utility to check and enable GPU usage. Automatically selects GPU if available.
 
 ## Citation
 

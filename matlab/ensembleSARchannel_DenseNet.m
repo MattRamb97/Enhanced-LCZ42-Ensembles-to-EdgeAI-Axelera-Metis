@@ -12,7 +12,7 @@
 %   rngSeed    (default 1337)
 %   plots      (default "none") % or "training-progress"
 %
-% Matteo Rambaldi — Thesis utilities
+% Author: Matteo Rambaldi — Thesis utilities
 
 function res = ensembleSARchannel_DenseNet(cfgT)
     % Ensemble of DenseNet201 models trained on 3 random SAR channels
