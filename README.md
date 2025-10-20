@@ -29,6 +29,7 @@ We make two main contributions:
 
 ## Repository Structure
 
+```bash
 Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/
 │
 ├── data/                # Placeholder for LCZ42 datasets (empty; linked via Zenodo)
@@ -40,6 +41,7 @@ Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/
 │
 ├── LICENSE              # MIT License
 └── README.md            # (This file)
+```
 
 Each subfolder includes its own `README.md` describing internal scripts and usage.
 
