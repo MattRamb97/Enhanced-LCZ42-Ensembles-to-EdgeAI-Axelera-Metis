@@ -73,7 +73,7 @@ function res = RandRGB_DenseNet_v2(cfgT)
         members(m).net    = netM;
         members(m).valAcc = acc;
 
-        fprintf('  val acc = %.4f\n', acc);
+        fprintf('  train acc = %.4f\n', acc);
     end
 
     % ---------- evaluate ensemble ----------

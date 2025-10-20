@@ -2,7 +2,7 @@
 %
 % Trains all three ensembles:
 %   - RAND     : Random 3-band MS
-%   - RANDRGB  : Fixed RGB MS bands
+%   - RANDRGB  : Mixed MS ensemble (2 MS random + 1 Fixed RGB MS band)
 %   - SAR      : Mixed MS+SAR ensemble (2 MS + 1 SAR bands per member)
 %
 % Usage:

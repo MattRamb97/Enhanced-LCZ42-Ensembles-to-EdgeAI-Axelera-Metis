@@ -1,9 +1,9 @@
 % MAKE_TABLES_FROM_H5  Build light tables (MS/SAR) pointing into LCZ42 HDF5 files.
-% root = 'data/lcz42'; with training.h5, validation.h5, testing.h5
+% root = 'data/lcz42'; with training.h5, testing.h5
 %
 % Produces:
-%   tables_MS.mat  -> train_MS, val_MS, test_MS
-%   tables_SAR.mat -> train_SAR, val_SAR, test_SAR
+%   tables_MS.mat  -> train_MS, test_MS
+%   tables_SAR.mat -> train_SAR, test_SAR
 %
 % Each table has variables: Path (string), Label (categorical 1..17),
 % Index (1-based), Modality ("MS"/"SAR")
@@ -54,8 +54,8 @@ function [N, labels_cat] = getN_and_labels(h5path)
     d2 = h5info(h5path,'/sen2').Dataspace.Size;
     dl = h5info(h5path,'/label').Dataspace.Size;
     
-    assert(numel(d1)==4 && d1(1)==8  && d1(2)==32 && d1(3)==32, '/sen1 dims unexpected: %s', mat2str(d1));
-    assert(numel(d2)==4 && d2(1)==10 && d2(2)==32 && d2(3)==32, '/sen2 dims unexpected: %s', mat2str(d2));
+    assert(numel(d1)==4 && d1(1)==8, '/sen1 dims unexpected: %s', mat2str(d1));
+    assert(numel(d2)==4 && d2(1)==10, '/sen2 dims unexpected: %s', mat2str(d2));
     assert(numel(dl)==2 && dl(1)==17, '/label dims unexpected: %s', mat2str(dl));
     
     N = d1(4);

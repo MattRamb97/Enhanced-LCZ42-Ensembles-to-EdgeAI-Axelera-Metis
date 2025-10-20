@@ -1,7 +1,7 @@
-%download the dataset from
-%https://dataserv.ub.tum.de/index.php/s/m1483140
+% download the dataset from
+% https://dataserv.ub.tum.de/index.php/s/m1483140
 
-% DATASETREADING  Build TRAIN/CAL/TEST datastores for So2Sat LCZ42 with HDF5 backing.
+% DATASETREADING  Build TRAIN/TEST datastores for So2Sat LCZ42 with HDF5 backing.
 %
 % Required:
 %   cfg.trainTable : table with {'Path','Label','Index','Modality'}
