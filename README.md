@@ -53,7 +53,7 @@ If you use this repository or derived datasets in your research, please cite:
 
 ```bibtex
 @mastersthesis{rambaldi2025enhancedlcz42,
-  title        = {Enhanced LCZ42 Ensembles to Edge AI: Knowledge Distillation and Deployment on Axelera Metis},
+  title        = {Advancing Deep Ensembles and Knowledge Distillation for Efficient Local Climate Zone Mapping on Axelera Metis},
   author       = {Rambaldi, Matteo},
   school       = {University of Padua},
   year         = {2025},
