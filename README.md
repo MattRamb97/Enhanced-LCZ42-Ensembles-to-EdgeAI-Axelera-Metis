@@ -68,8 +68,8 @@ See the LICENSE file for details.
 
 ## Author & Supervision
 
-Matteo Rambaldi — MSc Artificial Intelligence, University of Padua
-Supervised by Prof. Loris Nanni
+Matteo Rambaldi — MSc Artificial Intelligence, University of Padua\
+Supervised by Prof. Loris Nanni\
 Co-Supervisor: Eng. Cristian Garjitzky
 
 ## Links
