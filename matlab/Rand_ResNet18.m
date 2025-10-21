@@ -19,7 +19,7 @@ function res = Rand_ResNet18(cfgT)
 
     numMembers    = getf(cfgT, 'numMembers', 10);
     maxEpochs     = getf(cfgT, 'maxEpochs', 10);
-    miniBatchSize = getf(cfgT, 'miniBatchSize', 32);
+    miniBatchSize = getf(cfgT, 'miniBatchSize', 512);
     learnRate     = getf(cfgT, 'learnRate', 1e-3);
     rngSeed       = getf(cfgT, 'rngSeed', 1337);
 
@@ -27,7 +27,7 @@ function res = Rand_ResNet18(cfgT)
     numClasses = numel(classes);
 
     % ---------- model ----------
-    % Load DenseNet201 from .mat file (pretrained or untrained)
+    % Load ResNet18 from .mat file (pretrained)
     matfile = fullfile('matlab', 'resnet18_pretrained.mat');
     if ~exist(matfile, 'file')
         error('Missing ''%s''. Please create it locally and upload to HPC.', matfile);
@@ -64,12 +64,13 @@ function res = Rand_ResNet18(cfgT)
 
         dsTrM = toNetTableMS(dsTrain, bands, inSz(1:2));
         netM  = trainNetwork(dsTrM, lgraph, opts);
+        dlnetM = dlnetwork(netM);
 
         Ytr = classify(netM, dsTrM, 'MiniBatchSize', miniBatchSize);
         Ttr = gatherResponses(dsTrM);
         acc = mean(Ytr == Ttr);
 
-        members(m).net    = netM;
+        members(m).net    = dlnetM;
         members(m).bands  = bands;
         members(m).trainAcc = acc;
 

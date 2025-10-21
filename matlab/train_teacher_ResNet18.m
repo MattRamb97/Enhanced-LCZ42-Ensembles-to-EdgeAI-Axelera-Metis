@@ -6,22 +6,22 @@
 %   - SAR      : Mixed MS+SAR ensemble (2 MS + 1 SAR bands per member)
 %
 % Usage:
-%   train_teachers_v2('RAND')     - Train MS random band ensemble
-%   train_teachers_v2('RANDRGB')  - Train MS RGB-only ensemble
-%   train_teachers_v2('SAR')      - Train MS+SAR ensemble (2 MS + 1 SAR)
-%   train_teachers_v2('ALL')      - Train all three (default)
+%   train_teacher_ResNet18('RAND')     - Train MS random band ensemble
+%   train_teacher_ResNet18('RANDRGB')  - Train MS RGB-only ensemble
+%   train_teacher_ResNet18('SAR')      - Train MS+SAR ensemble (2 MS + 1 SAR)
+%   train_teacher_ResNet18('ALL')      - Train all three (default)
 %
 % Assumes HDF5 tables are already saved in:
 %   data/lcz42/tables_MS.mat → train_MS, test_MS
 %   data/lcz42/tables_SAR.mat → train_SAR, test_SAR
 %
-% Ensembles are trained with 12 epochs, batch size 128 by default.
+% Ensembles are trained with 10 epochs, batch size 512 by default.
 % Z-score normalization and augmentation are enabled.
 %
 % Outputs (in 'matlab/' folder):
-%   - resRand.mat
-%   - resRandRGB.mat
-%   - resSAR.mat
+%   - resRand_resnet18.mat
+%   - resRandRGB_resnet18.mat
+%   - resSAR_resnet18.mat
 %
 % Author: Matteo Rambaldi — Thesis utilities
 
@@ -51,7 +51,7 @@ function train_teacher_ResNet18(MODE)
         cfg = cfgCommon; cfg.trainTable = train_MS; cfg.testTable = test_MS;
         [dsTr, dsTe, info] = DatasetReading(cfg);
         cfgT = struct('dsTrain',dsTr,'dsTest',dsTe,'info',info, ...
-                      'maxEpochs',12,'miniBatchSize',128,'learnRate',1e-3);
+                      'maxEpochs',10,'miniBatchSize',512,'learnRate',1e-3);
         resRand = Rand_ResNet18(cfgT);
         resRand.name = "Rand";                                  
         save('matlab/resRand_resnet18.mat', 'resRand', '-v7.3');
@@ -62,7 +62,7 @@ function train_teacher_ResNet18(MODE)
         cfg = cfgCommon; cfg.trainTable = train_MS; cfg.testTable = test_MS;
         [dsTr, dsTe, info] = DatasetReading(cfg);
         cfgT = struct('dsTrain',dsTr,'dsTest',dsTe,'info',info, ...
-                      'maxEpochs',12,'miniBatchSize',128,'learnRate',1e-3);
+                      'maxEpochs',10,'miniBatchSize',512,'learnRate',1e-3);
         resRandRGB = RandRGB_ResNet18(cfgT);
         resRandRGB.name = "RandRGB";                            
         save('matlab/resRandRGB_resnet18.mat', 'resRandRGB', '-v7.3');
@@ -83,8 +83,8 @@ function train_teacher_ResNet18(MODE)
         cfgT = struct('dsTrain',dsTrMS, 'dsTest',dsTeMS, ...
                       'dsTrainSAR',dsTrSAR, 'dsTestSAR',dsTeSAR, ...
                       'info',infoMS, ...
-                      'maxEpochs',12,'miniBatchSize',128,'learnRate',1e-3);
-        resSAR = resSAR_resnet18(cfgT);
+                      'maxEpochs',10,'miniBatchSize',512,'learnRate',1e-3);
+        resSAR = randSAR_ResNet18(cfgT);
         resSAR.name = "SAR";                                     
         save('matlab/resSAR_resnet18.mat', 'resSAR', '-v7.3');
     end

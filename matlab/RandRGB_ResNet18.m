@@ -70,12 +70,13 @@ function res = RandRGB_ResNet18(cfgT)
         dsTrM = toNetTableMS(dsTrain, bands, inSz(1:2));
 
         netM = trainNetwork(dsTrM, lgraph, opts);
+        dlnetM = dlnetwork(netM);
 
         Ytr = classify(netM, dsTrM, 'MiniBatchSize', miniBatchSize);
         Ttr = gatherResponses(dsTrM);
         acc = mean(Ytr == Ttr);
 
-        members(m).net    = netM;
+        members(m).net    = dlnetM;
         members(m).trainAcc = acc;
         members(m).bands  = bands;
 

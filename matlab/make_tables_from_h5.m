@@ -49,6 +49,7 @@ end
 %   /sen1 : [8, 32, 32, N]
 %   /sen2 : [10,32, 32, N]
 %   /label: [17, N]
+
 function [N, labels_cat] = getN_and_labels(h5path)
     d1 = h5info(h5path,'/sen1').Dataspace.Size;
     d2 = h5info(h5path,'/sen2').Dataspace.Size;

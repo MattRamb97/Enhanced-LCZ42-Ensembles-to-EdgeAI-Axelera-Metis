@@ -1,5 +1,5 @@
 % randSAR_ResNet18
-% Mixed MS+SAR DenseNet201 ensemble with 2 MS + 1 SAR channels per member,
+% Mixed MS+SAR ResNet18 ensemble with 2 MS + 1 SAR channels per member,
 % compatible with DatasetReading(cfg) outputs.
 %
 % Required fields in cfgT:
@@ -12,7 +12,7 @@
 % Optional cfgT fields:
 %   numMembers     (default: 10)    % Number of ensemble members
 %   maxEpochs      (default: 10)    % Number of training epochs
-%   miniBatchSize  (default: 32)   % Mini-batch size
+%   miniBatchSize  (default: 512)   % Mini-batch size
 %   learnRate      (default: 1e-3)  % Learning rate
 %   rngSeed        (default: 1337)  % Random seed for reproducibility
 %   plots          (default: "none") % or "training-progress"
@@ -82,13 +82,14 @@ function res = randSAR_ResNet18(cfgT)
         
         % Train network
         netM = trainNetwork(dsTrM, lgraph, opts);
+        dlnetM = dlnetwork(netM);
 
         % Evaluate on training set
         Ytr = classify(netM, dsTrM, 'MiniBatchSize', miniBatchSize);
         Ttr = gatherResponses(dsTrM);
         acc = mean(Ytr == Ttr);
 
-        members(m).net = netM;
+        members(m).net = dlnetM;
         members(m).msBands = msBands;
         members(m).sarBand = sarBand;
         members(m).trainAcc = acc;
