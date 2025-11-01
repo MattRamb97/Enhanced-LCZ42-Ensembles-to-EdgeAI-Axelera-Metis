@@ -1,83 +1,40 @@
-# =========================================================
-#  Python & Build Artifacts
-# =========================================================
+# === Big Files ===
+*.h5
+*.pt
+*.pth
+*.onnx
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.mat
+
+# === Python & Build Artifacts ===
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
 *.egg-info/
-*.egg
-*.manifest
-*.spec
 build/
 dist/
-.eggs/
-.wheels/
-.installed.cfg
-MANIFEST
 
-# =========================================================
-#  MATLAB Temporary Files
-# =========================================================
-*.asv
-*.m~
-*.mex*
-*.fig
-*.slprj/
-*.autosave
-*.mdl.autosave
-*.slx.autosave
-
-# =========================================================
-#  Virtual Environments
-# =========================================================
-.env
-.venv
+# === Virtual Environments ===
+.venv/
 env/
-venv/
 ENV/
+.venv.bak/
 env.bak/
-venv.bak/
+*.env
 
-# =========================================================
-#  IDE / Editor Files
-# =========================================================
+# === IDE / OS / Editor Files ===
 .DS_Store
 .idea/
 .vscode/
 .spyproject
 .ropeproject
-.pybuilder/
-.pyre/
-.pytype/
-.ruff_cache/
-.marimo/
-.cursorignore
-.cursorindexingignore
 
-# =========================================================
-#  Testing / Coverage / Cache
-# =========================================================
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache/
-pytest_cache/
-htmlcov/
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-
-# =========================================================
-#  Jupyter Notebooks
-# =========================================================
+# === Jupyter / Logs / Temporary ===
 .ipynb_checkpoints/
-
-# =========================================================
-#  Logs & Temporary Files
-# =========================================================
 *.log
 *.tmp
 *.bak
@@ -85,54 +42,53 @@ coverage.xml
 *.swo
 *.out
 *.err
-*.zip
-*.tar
-*.tar.gz
 
-# =========================================================
-#  LCZ42 Project-Specific (large data)
-# =========================================================
+# === Testing / Coverage ===
+.cache/
+.tox/
+.nox/
+coverage.*
+*.cover
+*.py.cover
+htmlcov/
+pytest_cache/
+nosetests.xml
 
-# Raw and derived datasets
+# === MATLAB Temp Files ===
+*.asv
+*.m~
+*.mex*
+*.slprj/
+*.autosave
+*.mdl.autosave
+*.slx.autosave
+
+# === Data (So2Sat LCZ42) ===
 data/lcz42/*.h5
 data/lcz42/*.mat
-data/lcz42/*.sha512
 data/lcz42/checksums.*
-data/lcz42/LICENSE
+data/lcz42/*.sha512
 data/lcz42/read_file.py
+data/lcz42/LICENSE
 
-# Generated SR datasets
-data/lcz42/*_vdsr*.h5
-data/lcz42/*_edsr*.h5
-data/lcz42/*_esrgan*.h5
-data/lcz42/*_swinir*.h5
-data/lcz42/*_bsrnet*.h5
-data/lcz42/*_realesrgan*.h5
+# === TDA Artifacts ===
+tda/data/*.npy
+tda/data/*.h5
+tda/models/trained/*.pth
+tda/models/exported/*.onnx
+tda/results/*
 
-# =========================================================
-#  TDA Project-Specific (large intermediate data)
-# =========================================================
-TDA/tda_MS_features*.npy
-TDA/tda_SAR_features*.npy
-TDA/labels.npy
-TDA/examples/
-TDA/*.npy
-TDA/*.npz
+# === Super-Resolution Model Weights ===
+super_resolution/**/__pycache__/
+super_resolution/**/trained/
+super_resolution/**/weights/
 
-# Trained TDA weights (optional — comment if you want to version-control them)
-TDA/*.pth
+# === Deployment Artifacts ===
+deployment/*.onnx
+deployment/*.pth
+deployment/*.json
+deployment/*.txt
 
-# =========================================================
-#  Super-Resolution Models & Caches
-# =========================================================
-super-resolution/**/__pycache__/
-
-# =========================================================
-#  Export / Deployment / Distillation Artifacts
-# =========================================================
-deployment/onnx/*.onnx
-deployment/onnx/*.json
-deployment/onnx/*.txt
-deployment/onnx/*.pth
+# === Distillation Artifacts ===
 distillation/*.onnx
 distillation/*.pth

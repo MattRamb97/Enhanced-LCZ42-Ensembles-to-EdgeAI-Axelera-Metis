@@ -1,27 +1,24 @@
 # LCZ42 Dataset Structure
 
-This directory is reserved for the **So2Sat LCZ42** dataset and its **super-resolution enhanced variants** used in this project.
-
-
+This directory is reserved for the **So2Sat LCZ42** dataset, tables and its **super-resolution enhanced variants** used in this project.
 
 ## Directory Structure
 
 ```bash
 data/
 └── lcz42/
-├── training.h5                 # Sentinel-1/2 training data + one-hot encoded LCZ labels
-├── testing.h5                  # Sentinel-1/2 test data + one-hot encoded LCZ labels
-├── tables_MS.mat               # Metadata for Sentinel-2 multispectral bands
-├── tables_SAR.mat              # Metadata for Sentinel-1 SAR channels
-├── training_vdsr2x.h5          # SR-enhanced dataset (VDSR ×2)
-├── training_vdsr3x.h5          # SR-enhanced dataset (VDSR ×3)
-├── training_edsr2x.h5          # SR-enhanced dataset (EDSR ×2)
-├── training_edsr4x.h5          # SR-enhanced dataset (EDSR ×4)
-├── training_esrgan2x.h5        # SR-enhanced dataset (ESRGAN ×2, triplet semantic)
-├── training_swinir2x.h5        # SR-enhanced dataset (SwinIR ×2, Transformer)
-├── training_bsrnet2x.h5        # SR-enhanced dataset (BSRNet ×2, blind SR)
-├── training_realesrgan4x.h5    # SR-enhanced dataset (Real-ESRGAN ×4)
-└── README.md                   # Dataset documentation (this file)
+    ├── training.h5                 # Baseline Sentinel‑1/2 training patches + LCZ labels
+    ├── testing.h5                  # Baseline Sentinel‑1/2 test patches + LCZ labels
+    ├── tables_MS.mat               # Patch metadata (multispectral)
+    ├── tables_SAR.mat              # Patch metadata (SAR)
+    │
+    ├── tables_*.h5                 # Patch metadata SR‑enhanced datasets
+    │
+    ├── training_*.h5               # SR‑enhanced datasets (various models/scales)
+    │
+    ├── testing_*.h5                # Corresponding SR‑enhanced test
+    │
+    └── README.md                   # (This file)
 ```
 All files in this directory are excluded from version control (`.gitignore`) due to large storage requirements.
 
@@ -39,14 +36,10 @@ Each patch:
 - Resolution: **10 m × 10 m per pixel**
 
 **Reference:**
-> Zhu, X. X., et al.  
-> *“So2Sat LCZ42: A Benchmark Dataset for Global Local Climate Zone Classification.”*  
-> IEEE Geoscience and Remote Sensing Letters, 2019.  
+> Zhu, X. X., et al. *“So2Sat LCZ42: A Benchmark Dataset for Global Local Climate Zone Classification.”* IEEE Geoscience and Remote Sensing Letters, 2019.  
 > [DOI: 10.1109/LGRS.2019.2919262](https://doi.org/10.1109/LGRS.2019.2919262)
 
 Official project website: [http://www.so2sat.eu/](http://www.so2sat.eu/)
-
-
 
 ## Sentinel-1 (SEN1) Bands
 
@@ -58,8 +51,6 @@ Official project website: [http://www.so2sat.eu/](http://www.so2sat.eu/)
 6. Intensity of lee-filtered VV signal  
 7. Real part of lee-filtered PolSAR covariance off-diagonal element  
 8. Imaginary part of lee-filtered PolSAR covariance off-diagonal element  
-
----
 
 ## Sentinel-2 (SEN2) Bands
 
@@ -85,24 +76,24 @@ Each SR method is applied to the **Sentinel-2 multispectral channels (10 bands)*
 
 ### Summary of SR-enhanced datasets
 
-| ID | Method | Scale | Model Type | Implementation | Output File |
-|:--:|:--------|:------|:------------|:----------------|:--------------------------------------|
-| **1–2** | Baseline (No SR) | ×1 | — | — | `training.h5`, `testing.h5` |
-| **3** | VDSR | ×2 | CNN | MATLAB | `training_vdsr2x.h5` |
-| **4** | EDSR | ×2 | CNN | PyTorch | `training_edsr2x.h5` |
-| **5** | ESRGAN (Triplet Semantic) | ×2 | GAN | MATLAB | `training_esrgan2x.h5` |
-| **6** | EDSR | ×4 | CNN | PyTorch | `training_edsr4x.h5` |
-| **7** | SwinIR | ×2 | Transformer | PyTorch | `training_swinir2x.h5` |
-| **8** | VDSR | ×3 | CNN | MATLAB | `training_vdsr3x.h5` |
-| **9** | BSRNet | ×2 | Blind SR (CNN) | PyTorch | `training_bsrnet2x.h5` |
-| **10** | Real-ESRGAN | ×4 | GAN (High Magnification) | PyTorch | `training_realesrgan4x.h5` |
+| Method | Scale | Model Type | Implementation | Output File |
+|:--------|:------|:------------|:----------------|:--------------------------------------|
+| Baseline (No SR) | ×1 | — | — | `training.h5`, `testing.h5` |
+| VDSR | ×2 | CNN | MATLAB | `training_vdsr2x.h5`, `testing_vdsr2x.h5` |
+| EDSR | ×2 | CNN | PyTorch | `training_edsr2x.h5`, `testing_edsr2x.h5` |
+| ESRGAN (Triplet-based Semantic) | ×2 | GAN | MATLAB | `training_esrgan2x.h5`, `testing_esrgan2x.h5` |
+| EDSR | ×4 | CNN | PyTorch | `training_edsr4x.h5`,  `testing_edsr4x.h5` |
+| SwinIR | ×2 | Transformer | PyTorch | `training_swinir2x.h5`, `testing_swinir2x.h5` |
+| VDSR | ×3 | CNN | MATLAB | `training_vdsr3x.h5`, `testing_vdsr3x.h5` |
+| BSRNet | ×2 | Blind SR (CNN) | PyTorch | `training_bsrnet2x.h5`, `testing_bsrnet2x.h5` |
+| Real-ESRGAN | ×4 | GAN (High Magnification) | PyTorch | `training_realesrgan4x.h5`, `testing_realesrgan4x.h5` |
 
 ### Data structure
 
 Each SR-enhanced dataset maintains the same structure as the original LCZ42 `.h5` files:
 
-- `/sen2`: super-resolved Sentinel-2 multispectral data in **[0, 2.8]**, `float32`  
 - `/label`: original LCZ **one-hot encoded** vectors (17 classes)
+- `/sen2`: super-resolved Sentinel-2 multispectral data in **[0, 2.8]** reflectance-like scale, `float16`
 
 ## Access
 
@@ -117,6 +108,15 @@ Public datasets, including the super-resolution enhanced versions, are hosted on
 
 **Funding**: ERC Starting Grant “So2Sat: Big Data for 4D Global Urban Mapping”
 
-## Maintainer
+## Author & Supervision
 
-**Matteo Rambaldi** — University of Padua  •  MSc Artificial Intelligence and Robotics (2025)
+Matteo Rambaldi — MSc Artificial Intelligence, University of Padua\
+Supervised by Prof. Loris Nanni\
+Co-Supervisor: Eng. Cristian Garjitzky
+
+## License
+
+The original So2Sat LCZ42 dataset is © TUM/DLR and distributed under their specified terms.  
+All super-resolved derivatives included here are released for **non-commercial research use** only.
+
+Refer to the original dataset license and publication for attribution.

@@ -1,5 +1,5 @@
 # MATLAB Teacher Ensemble Training
-This folder contains all MATLAB utilities used to train, validate, and export the *teacher ensembles* used in the Enhanced LCZ42 pipeline.
+This folder contains all MATLAB utilities used to train, validate, and export the *teacher ensembles* used in the Enhanced LCZ42 pipeline for both DenseNet201 and ResNet18.
 
 ## Pipeline Overview
 
@@ -177,11 +177,31 @@ Trains DenseNet-201 or ResNet18 ensemble on 2 MS + 1 SAR channel combinations.
 ### Summary
 
 This MATLAB pipeline provides the teacher ensembles that serve as supervision for:
-1. **Super-resolution models** (trained separately in `super-resolution/`).
-2. **Knowledge distillation** (student models in `distillation/`).
+1. **Super-resolution** (`super_resolution/`).
+2. **TDA** (`tda/`).
+2. **Knowledge distillation** (`distillation/`).
 
-All trained networks can be exported to ONNX format using `deployment/Export_ONNX.m`.
+## Citation
 
-## Maintainer
+If you use this repository or derived datasets in your research, please cite:
 
-**Matteo Rambaldi** — University of Padua  •  MSc Artificial Intelligence and Robotics (2025)
+```bibtex
+@mastersthesis{rambaldi2025enhancedlcz42,
+  title        = {Enhanced LCZ42 Ensembles to Edge AI: Knowledge Distillation and Deployment on Axelera Metis},
+  author       = {Rambaldi, Matteo},
+  school       = {University of Padua},
+  year         = {2025},
+  note         = {GitHub Repository: https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis}
+}
+```
+
+## License
+
+This project is released under the MIT License.
+See the LICENSE file for details.
+
+## Author & Supervision
+
+Matteo Rambaldi — MSc Artificial Intelligence, University of Padua\
+Supervised by Prof. Loris Nanni\
+Co-Supervisor: Eng. Cristian Garjitzky

@@ -26,15 +26,40 @@ We make two main contributions:
 ```bash
 Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/
 │
-├── data/                # Placeholder for LCZ42 datasets (empty; linked via Zenodo)
-├── deployment/          # ONNX export and Metis EdgeAI integration
-├── distillation/        # Knowledge distillation and student model training
-├── matlab/              # MATLAB preprocessing and ensemble creation
-├── super-resolution/    # VDSR, EDSR, ESRGAN, SwinIR, BSRNet, Real-ESRGAN pipelines
-├── TDA/                 # Topological Data Analysis
+├── data/
+│   └── lcz42/                 # So2Sat LCZ42 HDF5 files and .mat tables
 │
-├── LICENSE              # MIT License
-└── README.md            # (This file)
+├── densenet201_ensembles/     # Deep ensemble training (DenseNet201)
+│
+├── deployment/                # ONNX export and Metis EdgeAI integration
+│
+├── distillation/              # Knowledge distillation (ResNet18 students)
+│
+├── fusion_ensembles/          # ResNet18 + TDA fusion models
+│
+├── matlab/                    # MATLAB scripts for preprocessing & teacher training
+│   ├── densenet201_ensembles/
+│   └── resnet18-ensembles/
+│
+├── resnet18-ensembles/        # Baseline ResNet18 teacher models (Rand/RGB/SAR)
+│
+├── super_resolution/          # VDSR, EDSR, ESRGAN, SwinIR, Real-ESRGAN, BSRNet
+│   ├── bsrnet/
+│   ├── edsr/
+│   ├── esrgan/
+│   ├── real_esrgan/
+│   ├── swinir/
+│   └── vdsr/
+│
+├── tda/                       # TDA feature extraction and fusion training
+│   ├── data/
+│   ├── models/
+│   ├── scripts/
+│   ├── results/
+│   └── npy-matlab/
+│
+├── LICENSE
+└── README.md
 ```
 
 Each subfolder includes its own `README.md` describing internal scripts and usage.
@@ -42,10 +67,8 @@ Each subfolder includes its own `README.md` describing internal scripts and usag
 ## Reproducibility
 
 1. Download LCZ42 data and place it under `data/lcz42/`
-2. Run the preprocessing pipelines (MATLAB → Super-Resolution → TDA → Distillation).
+2. Run the preprocessing pipelines (Matlab / DenseNet201 / ResNet18 → Super-Resolution → TDA → Distillation).
 3. Export and deploy trained models using scripts in deployment/.
-
-A full guide to reproducing results and exporting ONNX models is provided in deployment/README.md.
 
 ## Citation
 

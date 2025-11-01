@@ -1,0 +1,19 @@
+{
+  "model_name": "fusion_resnet18_rand_baseline1",
+  "architecture": "FusionResNet18",
+  "epochs": 12,
+  "batch_size": 512,
+  "learning_rate": 0.001,
+  "optimizer": "Adam",
+  "scheduler": "ReduceLROnPlateau",
+  "final_top1": 0.5552753431453613,
+  "train_time_sec": 5564.14177107811,
+  "num_classes": 17,
+  "device": "cuda:0",
+  "seed": 42,
+  "selected_bands": [
+    10,
+    6,
+    5
+  ]
+}

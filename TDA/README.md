@@ -128,6 +128,27 @@ Outputs persistence images for homology dimensions H₀ and H₁ using Giotto-TD
 - 8 Sentinel-1 bands × 2 homology dims × (30×30 bins) → 14,400 features
 - Hardware: GPU recommended for training fusion models; CPU sufficient for TDA extraction.
 
-## Maintainer
+## Citation
 
-**Matteo Rambaldi** — University of Padua  •  MSc Artificial Intelligence and Robotics (2025)
+If you use this repository or derived datasets in your research, please cite:
+
+```bibtex
+@mastersthesis{rambaldi2025enhancedlcz42,
+  title        = {Enhanced LCZ42 Ensembles to Edge AI: Knowledge Distillation and Deployment on Axelera Metis},
+  author       = {Rambaldi, Matteo},
+  school       = {University of Padua},
+  year         = {2025},
+  note         = {GitHub Repository: https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis}
+}
+```
+
+## License
+
+This project is released under the MIT License.
+See the LICENSE file for details.
+
+## Author & Supervision
+
+Matteo Rambaldi — MSc Artificial Intelligence, University of Padua\
+Supervised by Prof. Loris Nanni\
+Co-Supervisor: Eng. Cristian Garjitzky

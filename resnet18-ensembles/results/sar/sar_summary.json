@@ -1,0 +1,15 @@
+{
+  "model_name": "SAR",
+  "architecture": "ResNet18",
+  "epochs": 12,
+  "batch_size": 512,
+  "learning_rate": 0.001,
+  "optimizer": "SGD(momentum=0.9)",
+  "scheduler": "None",
+  "final_top1": 0.6351496609889201,
+  "train_time_sec": 8821.628903388977,
+  "num_classes": 17,
+  "device": "cuda:0",
+  "seed": 42,
+  "num_members": 10
+}
