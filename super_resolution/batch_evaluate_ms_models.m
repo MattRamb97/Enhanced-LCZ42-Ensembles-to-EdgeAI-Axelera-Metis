@@ -1,4 +1,3 @@
-% batch_evaluate_ms_models.m
 % Complete evaluation script for MS super-resolution models
 clear; clc;
 

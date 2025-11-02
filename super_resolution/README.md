@@ -403,6 +403,27 @@ disp(metrics.MeanPSNR)
 - Computes PSNR, SSIM, and RMSE band-wise across all samples
 - Supports both multispectral (SEN2) and SAR (SEN1) modalities
 
-## Maintainer
+## Citation
 
-**Matteo Rambaldi** — University of Padua  •  MSc Artificial Intelligence and Robotics (2025)
+If you use this repository or derived datasets in your research, please cite:
+
+```bibtex
+@mastersthesis{rambaldi2025enhancedlcz42,
+  title        = {Enhanced LCZ42 Ensembles to Edge AI: Knowledge Distillation and Deployment on Axelera Metis},
+  author       = {Rambaldi, Matteo},
+  school       = {University of Padua},
+  year         = {2025},
+  note         = {GitHub Repository: https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis}
+}
+```
+
+## License
+
+This project is released under the MIT License.
+See the LICENSE file for details.
+
+## Author & Supervision
+
+Matteo Rambaldi — MSc Artificial Intelligence, University of Padua\
+Supervised by Prof. Loris Nanni\
+Co-Supervisor: Eng. Cristian Garjitzky
