@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import confusion_matrix
-from torch.utils.data import DataLoader, SubsetRandomSampler
+from torch.utils.data import DataLoader, Dataset
 from torchvision.models import densenet201, DenseNet201_Weights
 from tqdm import tqdm
 
@@ -112,12 +112,12 @@ def train_randsar_densenet201(cfgT: Dict) -> Dict:
     info = cfgT["info"]
 
     num_members = cfgT.get("numMembers", 10)
-    max_epochs = cfgT.get("maxEpochs", 10)
+    max_epochs = cfgT.get("maxEpochs", 12)
     batch_size = cfgT.get("miniBatchSize", 512)
     learn_rate = cfgT.get("learnRate", 1e-3)
     rng_seed = cfgT.get("rngSeed", 1337)
-    num_workers = cfgT.get("numWorkers", 4)
-    weight_decay = cfgT.get("weightDecay", 0.0)
+    num_workers = cfgT.get("numWorkers", 6)
+    weight_decay = cfgT.get("weightDecay", cfgT.get("weight_decay", 1e-4))
 
     device: Optional[torch.device] = cfgT.get("device")
     if device is None:
@@ -137,23 +137,50 @@ def train_randsar_densenet201(cfgT: Dict) -> Dict:
     classes = info.get("classes_str", info["classes"])
     num_classes = len(classes)
 
-    # ---- TRAIN loaders (shared random order) ----
-    g = torch.Generator()
-    g.manual_seed(rng_seed)  # so both samplers get the same permutation
-    idx = torch.randperm(len(ds_train_ms), generator=g).tolist()
+    class _PairedDataset(Dataset):
+        """Zip MS and SAR datasets so batches stay aligned."""
 
-    sampler_train = SubsetRandomSampler(idx)
-    train_loader_ms  = DataLoader(ds_train_ms,  batch_size=batch_size, sampler=sampler_train,
-                                num_workers=num_workers, pin_memory=use_cuda, drop_last=False)
-    # reuse the SAME sampler object to guarantee identical order
-    train_loader_sar = DataLoader(ds_train_sar, batch_size=batch_size, sampler=sampler_train,
-                                num_workers=num_workers, pin_memory=use_cuda, drop_last=False)
+        def __init__(self, ds_ms, ds_sar):
+            if len(ds_ms) != len(ds_sar):
+                raise ValueError(
+                    "MS and SAR datasets must share the same length "
+                    f"(got {len(ds_ms)} vs {len(ds_sar)})."
+                )
+            self.ds_ms = ds_ms
+            self.ds_sar = ds_sar
 
-    # ---- TEST loaders (deterministic, aligned) ----
-    test_loader_ms  = DataLoader(ds_test_ms,  batch_size=batch_size, shuffle=False,
-                                num_workers=num_workers, pin_memory=use_cuda, drop_last=False)
-    test_loader_sar = DataLoader(ds_test_sar, batch_size=batch_size, shuffle=False,
-                                num_workers=num_workers, pin_memory=use_cuda, drop_last=False)
+        def __len__(self) -> int:
+            return len(self.ds_ms)
+
+        def __getitem__(self, idx: int):
+            ms_sample, ms_label = self.ds_ms[idx]
+            sar_sample, sar_label = self.ds_sar[idx]
+            if ms_label != sar_label:
+                raise ValueError(
+                    f"Label mismatch between modalities at index {idx}: "
+                    f"MS={ms_label}, SAR={sar_label}."
+                )
+            return ms_sample, sar_sample, ms_label
+
+    train_dataset = _PairedDataset(ds_train_ms, ds_train_sar)
+    test_dataset = _PairedDataset(ds_test_ms, ds_test_sar)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=use_cuda,
+        drop_last=False,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=use_cuda,
+        drop_last=False,
+    )
 
     members_models: List[nn.Module] = []
     members_meta: List[MemberSummary] = []
@@ -187,14 +214,12 @@ def train_randsar_densenet201(cfgT: Dict) -> Dict:
             correct = 0
             samples = 0
 
-            total_batches = min(len(train_loader_ms), len(train_loader_sar))
-            progress = tqdm(zip(train_loader_ms, train_loader_sar),
-                            total=total_batches,
-                            desc=f"  Epoch {epoch + 1:02d}/{max_epochs}",
-                            leave=False)
-            for ms_batch, sar_batch in progress:
-                images_ms, labels = ms_batch
-                images_sar, _ = sar_batch  # labels are identical due to shared sampler
+            progress = tqdm(
+                train_loader,
+                desc=f"  Epoch {epoch + 1:02d}/{max_epochs}",
+                leave=False,
+            )
+            for images_ms, images_sar, labels in progress:
 
                 images_ms = images_ms.to(device, non_blocking=True)
                 images_sar = images_sar.to(device, non_blocking=True)
@@ -228,11 +253,9 @@ def train_randsar_densenet201(cfgT: Dict) -> Dict:
         model.eval()
         with torch.no_grad():
             scores_batches = []
-            total_batches = min(len(test_loader_ms), len(test_loader_sar))
-            for (ms_batch, sar_batch) in tqdm(zip(test_loader_ms, test_loader_sar),
-                                             total=total_batches, leave=False, desc="  Eval"):
-                images_ms, _ = ms_batch
-                images_sar, _ = sar_batch
+            for images_ms, images_sar, _ in tqdm(
+                test_loader, leave=False, desc="  Eval"
+            ):
 
                 images_ms = images_ms.to(device, non_blocking=True)
                 images_sar = images_sar.to(device, non_blocking=True)
@@ -247,14 +270,22 @@ def train_randsar_densenet201(cfgT: Dict) -> Dict:
             member_test_scores.append(torch.cat(scores_batches, dim=0))
 
         members_models.append(model.to("cpu"))
-        members_meta.append(
-            MemberSummary(
-                bands=[*bands_ms.tolist(), *[b + num_bands_ms for b in bands_sar.tolist()]],  # combined 3 bands
-                bands_one_based=[*(bands_ms + 1).tolist(), *(bands_sar + num_bands_ms + 1).tolist()],
-                train_loss_history=epoch_losses,
-                train_acc_history=epoch_accs,
-            )
+        meta = MemberSummary(
+            bands=[*bands_ms.tolist(), *[b + num_bands_ms for b in bands_sar.tolist()]],  # combined 3 bands
+            bands_one_based=[*(bands_ms + 1).tolist(), *(bands_sar + num_bands_ms + 1).tolist()],
+            train_loss_history=epoch_losses,
+            train_acc_history=epoch_accs,
         )
+        meta.ms_bands = bands_ms.tolist()
+        meta.sar_bands = bands_sar.tolist()
+        meta.ms_bands_one_based = (bands_ms + 1).tolist()
+        meta.sar_bands_one_based = (bands_sar + 1).tolist()
+        meta.sar_components = len(bands_sar)
+        meta.bands_one_based = {
+            "ms": meta.ms_bands_one_based,
+            "sar": meta.sar_bands_one_based,
+        }
+        members_meta.append(meta)
         if use_cuda:
             torch.cuda.empty_cache()
 
@@ -263,8 +294,8 @@ def train_randsar_densenet201(cfgT: Dict) -> Dict:
     # --------------------------------------------------------------
     scores_avg = torch.stack(member_test_scores, dim=0).mean(dim=0).numpy()
     y_true_batches = []
-    for _, labels in test_loader_ms:
-        y_true_batches.append(labels.numpy())
+    for _, _, labels in test_loader:
+        y_true_batches.append(labels.cpu().numpy())
     y_true = np.concatenate(y_true_batches, axis=0) + 1 # convert to one-based
     y_pred = scores_avg.argmax(axis=1) + 1
 

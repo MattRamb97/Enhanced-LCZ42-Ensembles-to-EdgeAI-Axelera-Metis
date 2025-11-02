@@ -110,12 +110,12 @@ def train_randrgb_densenet201(cfgT: Dict) -> Dict:
     info = cfgT["info"]
 
     num_members = cfgT.get("numMembers", 10)
-    max_epochs = cfgT.get("maxEpochs", 10)
+    max_epochs = cfgT.get("maxEpochs", 12)
     batch_size = cfgT.get("miniBatchSize", 512)
     learn_rate = cfgT.get("learnRate", 1e-3)
     rng_seed = cfgT.get("rngSeed", 1337)
-    num_workers = cfgT.get("numWorkers", 4)
-    weight_decay = cfgT.get("weightDecay", 0.0)
+    num_workers = cfgT.get("numWorkers", 6)
+    weight_decay = cfgT.get("weightDecay", cfgT.get("weight_decay", 1e-4))
 
     device: Optional[torch.device] = cfgT.get("device")
     if device is None:

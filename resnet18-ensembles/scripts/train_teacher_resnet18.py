@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 from scipy.io import loadmat
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, confusion_matrix
 
 from dataset_reading import DatasetReading
 from enable_gpu import enable_gpu
@@ -22,10 +22,11 @@ SEED = 42
 DATA_ROOT = "../../data/lcz42"
 SAVE_DIR = "../models/trained"
 EPOCHS = 12
-BATCH_SIZE = 512
+BATCH_SIZE = 1024
 LEARNING_RATE = 1e-3
+WEIGHT_DECAY = 1e-4
 USE_ZSCORE = True
-USE_SAR_DESPECKLE = False
+USE_SAR_DESPECKLE = True
 USE_AUG = True
 
 
@@ -75,6 +76,24 @@ def _matlab_table_to_df(table_array: np.ndarray) -> pd.DataFrame:
     return df
 
 
+def _format_member_record(idx: int, meta) -> dict:
+    """Uniform CSV record for ensemble members across modalities."""
+    record = {
+        "member": idx + 1,
+        "final_train_loss": meta.final_loss,
+        "final_train_acc": meta.final_acc,
+    }
+    bands_info = getattr(meta, "bands_one_based", [])
+    if isinstance(bands_info, dict):
+        record["ms_bands"] = ",".join(map(str, bands_info.get("ms", [])))
+        record["sar_bands"] = ",".join(map(str, bands_info.get("sar", [])))
+        if hasattr(meta, "sar_components"):
+            record["sar_components"] = meta.sar_components
+    else:
+        record["bands"] = ",".join(map(str, bands_info))
+    return record
+
+
 def load_table_mat(path: str, train_key: str, test_key: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     data = loadmat(path, simplify_cells=False)
     train = _matlab_table_to_df(data[train_key])
@@ -107,6 +126,8 @@ def train_teacher_resnet18(mode="ALL"):
     os.makedirs(SAVE_DIR, exist_ok=True)
     os.makedirs("../results", exist_ok=True)
 
+    ensemble_results = {}
+
     # ---------------- RAND ---------------- #
     if do_rand:
         print("\n=== Training RAND (MS) ===")
@@ -124,11 +145,13 @@ def train_teacher_resnet18(mode="ALL"):
             rngSeed=SEED,
             numWorkers=6,
             device=device,
+            weightDecay=WEIGHT_DECAY,
         )
 
         start_time = time.time()
         res = train_rand_resnet18(cfgT)
         elapsed = time.time() - start_time
+        ensemble_results["Rand"] = res
 
         model = res["ensemble"]
         history = res["history"]
@@ -149,6 +172,9 @@ def train_teacher_resnet18(mode="ALL"):
             output_dict=True, zero_division=0
         )
 
+        macro_avg = report.get("macro avg", {})
+        weighted_avg = report.get("weighted avg", {})
+
         summary = {
             "model_name": "Rand",
             "architecture": "ResNet18",
@@ -163,16 +189,17 @@ def train_teacher_resnet18(mode="ALL"):
             "device": str(device),
             "seed": SEED,
             "num_members": res["num_members"],
+            "accuracy": float(report.get("accuracy", top1)),
+            "macro_precision": float(macro_avg.get("precision", 0.0)),
+            "macro_recall": float(macro_avg.get("recall", 0.0)),
+            "macro_f1": float(macro_avg.get("f1-score", 0.0)),
+            "weighted_precision": float(weighted_avg.get("precision", 0.0)),
+            "weighted_recall": float(weighted_avg.get("recall", 0.0)),
+            "weighted_f1": float(weighted_avg.get("f1-score", 0.0)),
         }
 
         members_records = [
-            {
-                "member": idx + 1,
-                "bands": ",".join(map(str, meta.bands_one_based)),
-                "final_train_loss": meta.final_loss,
-                "final_train_acc": meta.final_acc,
-            }
-            for idx, meta in enumerate(members_meta)
+            _format_member_record(idx, meta) for idx, meta in enumerate(members_meta)
         ]
         history_curves = pd.DataFrame({
             "epoch": np.arange(1, history["loss_mean"].shape[0] + 1),
@@ -221,11 +248,13 @@ def train_teacher_resnet18(mode="ALL"):
             rngSeed=SEED,
             numWorkers=6,
             device=device,
+            weightDecay=WEIGHT_DECAY,
         )
 
         start_time = time.time()
         res = train_randrgb_resnet18(cfgT)
         elapsed = time.time() - start_time
+        ensemble_results["RandRGB"] = res
 
         model = res["ensemble"]
         history = res["history"]
@@ -246,6 +275,9 @@ def train_teacher_resnet18(mode="ALL"):
             output_dict=True, zero_division=0
         )
 
+        macro_avg = report.get("macro avg", {})
+        weighted_avg = report.get("weighted avg", {})
+
         summary = {
             "model_name": "RandRGB",
             "architecture": "ResNet18",
@@ -260,16 +292,17 @@ def train_teacher_resnet18(mode="ALL"):
             "device": str(device),
             "seed": SEED,
             "num_members": res["num_members"],
+            "accuracy": float(report.get("accuracy", top1)),
+            "macro_precision": float(macro_avg.get("precision", 0.0)),
+            "macro_recall": float(macro_avg.get("recall", 0.0)),
+            "macro_f1": float(macro_avg.get("f1-score", 0.0)),
+            "weighted_precision": float(weighted_avg.get("precision", 0.0)),
+            "weighted_recall": float(weighted_avg.get("recall", 0.0)),
+            "weighted_f1": float(weighted_avg.get("f1-score", 0.0)),
         }
 
         members_records = [
-            {
-                "member": idx + 1,
-                "bands": ",".join(map(str, meta.bands_one_based)),
-                "final_train_loss": meta.final_loss,
-                "final_train_acc": meta.final_acc,
-            }
-            for idx, meta in enumerate(members_meta)
+            _format_member_record(idx, meta) for idx, meta in enumerate(members_meta)
         ]
         history_curves = pd.DataFrame({
             "epoch": np.arange(1, history["loss_mean"].shape[0] + 1),
@@ -326,11 +359,13 @@ def train_teacher_resnet18(mode="ALL"):
             rngSeed=SEED,
             numWorkers=6,
             device=device,
+            weightDecay=WEIGHT_DECAY,
         )
 
         start_time = time.time()
         res = train_randsar_resnet18(cfgT)
         elapsed = time.time() - start_time
+        ensemble_results["SAR"] = res
 
         model = res["ensemble"]
         history = res["history"]
@@ -351,6 +386,9 @@ def train_teacher_resnet18(mode="ALL"):
             output_dict=True, zero_division=0
         )
 
+        macro_avg = report.get("macro avg", {})
+        weighted_avg = report.get("weighted avg", {})
+
         summary = {
             "model_name": "SAR",
             "architecture": "ResNet18",
@@ -365,16 +403,17 @@ def train_teacher_resnet18(mode="ALL"):
             "device": str(device),
             "seed": SEED,
             "num_members": res["num_members"],
+            "accuracy": float(report.get("accuracy", top1)),
+            "macro_precision": float(macro_avg.get("precision", 0.0)),
+            "macro_recall": float(macro_avg.get("recall", 0.0)),
+            "macro_f1": float(macro_avg.get("f1-score", 0.0)),
+            "weighted_precision": float(weighted_avg.get("precision", 0.0)),
+            "weighted_recall": float(weighted_avg.get("recall", 0.0)),
+            "weighted_f1": float(weighted_avg.get("f1-score", 0.0)),
         }
 
         members_records = [
-            {
-                "member": idx + 1,
-                "bands": ",".join(map(str, meta.bands_one_based)),
-                "final_train_loss": meta.final_loss,
-                "final_train_acc": meta.final_acc,
-            }
-            for idx, meta in enumerate(members_meta)
+            _format_member_record(idx, meta) for idx, meta in enumerate(members_meta)
         ]
         history_curves = pd.DataFrame({
             "epoch": np.arange(1, history["loss_mean"].shape[0] + 1),
@@ -405,6 +444,76 @@ def train_teacher_resnet18(mode="ALL"):
             json.dump(summary, f, indent=2)
 
         print(f"[INFO] SAR model finished — Top-1: {top1:.4f}")
+
+    if {"Rand", "RandRGB", "SAR"}.issubset(ensemble_results.keys()):
+        print("\n=== Computing ResNet18 Sum-Rule Fusion (Rand + RandRGB + SAR) ===")
+        rand_res = ensemble_results["Rand"]
+        randrgb_res = ensemble_results["RandRGB"]
+        sar_res = ensemble_results["SAR"]
+
+        y_true = rand_res["y_true"]
+        classes_list = [str(c) for c in rand_res["classes"]]
+
+        fused_scores = (
+            rand_res["scores_avg"]
+            + randrgb_res["scores_avg"]
+            + sar_res["scores_avg"]
+        ) / 3.0
+        fused_pred = fused_scores.argmax(axis=1) + 1
+        fused_top1 = float((fused_pred == y_true).mean())
+        fused_cm = confusion_matrix(
+            y_true, fused_pred, labels=np.arange(1, len(classes_list) + 1)
+        )
+
+        report = classification_report(
+            y_true,
+            fused_pred,
+            labels=np.arange(1, len(classes_list) + 1),
+            target_names=classes_list,
+            output_dict=True,
+            zero_division=0,
+        )
+        macro_avg = report.get("macro avg", {})
+        weighted_avg = report.get("weighted avg", {})
+
+        fusion_summary = {
+            "model_name": "ResNet18_SumRule",
+            "architecture": "ResNet18",
+            "components": ["Rand", "RandRGB", "SAR"],
+            "final_top1": float(fused_top1),
+            "accuracy": float(report.get("accuracy", fused_top1)),
+            "macro_precision": float(macro_avg.get("precision", 0.0)),
+            "macro_recall": float(macro_avg.get("recall", 0.0)),
+            "macro_f1": float(macro_avg.get("f1-score", 0.0)),
+            "weighted_precision": float(weighted_avg.get("precision", 0.0)),
+            "weighted_recall": float(weighted_avg.get("recall", 0.0)),
+            "weighted_f1": float(weighted_avg.get("f1-score", 0.0)),
+            "num_classes": len(classes_list),
+            "seed": SEED,
+        }
+
+        fusion_dir = "../results/fusion"
+        os.makedirs(fusion_dir, exist_ok=True)
+
+        save_h5_results(
+            h5_path=os.path.join(fusion_dir, "resnet18_sumrule_eval_TEST.h5"),
+            name="ResNet18_SumRule",
+            classes=classes_list,
+            top1=fused_top1,
+            cm=fused_cm,
+            y_true=y_true,
+            y_pred=fused_pred,
+            history={},
+            extra={
+                "summary": json.dumps(fusion_summary),
+                "classification_report": json.dumps(report),
+            },
+        )
+
+        with open(os.path.join(fusion_dir, "resnet18_sumrule_summary.json"), "w") as f:
+            json.dump(fusion_summary, f, indent=2)
+
+        print(f"[INFO] Sum-rule fusion finished — Top-1: {fused_top1:.4f}")
 
 
 if __name__ == "__main__":
