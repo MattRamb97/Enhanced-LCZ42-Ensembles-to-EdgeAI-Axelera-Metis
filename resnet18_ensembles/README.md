@@ -12,7 +12,7 @@ Each ensemble is trained on a distinct input setting:
 |---------------|----------------|-------------|
 | `rand`        | Sentinel-2 (10 bands) | Multispectral only random 3 channels |
 | `randrgb`     | Sentinel-2 (10 bands) | Multispectral RGB 3 channels |
-| `sar`         | Sentinel-2 (10 bands) + Sentinel-1 (8 bands)  | Multispectral 2 random channels + 1 SAR random channel |
+| `sar`         | Sentinel-2 (10 bands) + Sentinel-1 (8 bands) | Multispectral 2 random channels + 1 SAR random channel |
 
 
 ---
@@ -21,12 +21,12 @@ Each ensemble is trained on a distinct input setting:
 
 ```bash
 resnet18_ensembles/
-├── scripts/                 # Training, evaluation, and utilities
+├── scripts/                  # Training, evaluation, and utilities
 ├── models/
-│   └── trained/             # Saved model weights (.pth)
-├── results/                 # Evaluation metrics, confusion matrices, plots
-├── requirements.txt         # Dependencies for this module
-└── README.md                # (This file)
+│   └── trained/              # Saved model weights (.pth)
+├── results/                  # Evaluation metrics, confusion matrices, plots
+├── requirements.txt          # Dependencies for this module
+└── README.md                 # (This file)
 
 
 ---
@@ -51,9 +51,9 @@ resnet18_ensembles/
 
 | File | Input | Description |
 |------|--------|-------------|
-| `Rand_resnet18.pth` | Sentinel-2 | Trained 10 Members Ensembles on random 3 channels /sen2 |
-| `RandRGB_resnet18.pth` | Sentinel-2 | Trained 10 Members Ensembles on RGB 3 channels /sen2 |
-| `SAR_resnet18.pth` | Sentinel-2 + Sentinel-1 | Trained 10 Members Ensembles on 2 random channels /sen2 + 1 random channel /sen1|
+| `Rand_resnet18.pth` | Sentinel-2 | Trained 10-member ensemble on random 3 channels (/sen2) |
+| `RandRGB_resnet18.pth` | Sentinel-2 | Trained 10-member ensemble on 2 random + 1 RGB channel (/sen2) |
+| `SAR_resnet18.pth` | Sentinel-2 + Sentinel-1 | Trained 10-member ensemble on 2 random /sen2 + 1 random /sen1 |
 
 ---
 
@@ -69,6 +69,9 @@ The `results/` directory contains both visual and tabular performance summaries 
   - `*_summary.json` → Aggregated evaluation metrics (accuracy, F1, etc.)  
   - `*_eval_TEST.h5` → Per-sample test predictions  
   - `*_members.csv` → Logits of individual ensemble members  
+- **Sum-rule fusion:**  
+  - `results/<mode>/fusion_resnet18_<mode>_sumrule_*` ⟶ ensemble-average scores for that mode  
+  - `results/fusion/resnet18_sumrule_*` ⟶ global fusion across RAND + RANDRGB + SAR  
 
 ---
 
@@ -83,18 +86,16 @@ pip install -r requirements.txt
 ---
 
 ## Reproducibility
-1. Place preprocessed .h5 datasets under data/lcz42/ (see root README.md)
-2. Run training for each configuration:
+1. Place preprocessed `.h5` datasets under `data/lcz42/` (see root README)
+2. Launch teachers (single configuration or ALL):
 
 ```bash
-python train_teacher_resnet18.py --mode RAND
-python train_teacher_resnet18.py --mode RANDRGB
-python train_teacher_resnet18.py --mode SAR
+python scripts/train_teacher_resnet18.py --mode ALL
 ```
-3. Inspect metrics and confusion matrices with:
+3. Inspect metrics and confusion matrices:
 
 ```bash
-python inspect_results.py
+python scripts/inspect_results.py
 ```
 
 ## Citation

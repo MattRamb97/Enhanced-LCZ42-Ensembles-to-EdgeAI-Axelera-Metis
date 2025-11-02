@@ -35,13 +35,13 @@ Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/
 │
 ├── distillation/              # Knowledge distillation (ResNet18 students)
 │
-├── fusion_ensembles/          # ResNet18 + TDA fusion models
+├── fusion_ensembles/          # DenseNet201 + TDA fusion (MS/SR/SAR)
 │
 ├── matlab/                    # MATLAB scripts for preprocessing & teacher training
 │   ├── densenet201_ensembles/
 │   └── resnet18-ensembles/
 │
-├── resnet18-ensembles/        # Baseline ResNet18 teacher models (Rand/RGB/SAR)
+├── resnet18_ensembles/        # Baseline ResNet18 teacher models (Rand/RGB/SAR)
 │
 ├── super_resolution/          # VDSR, EDSR, ESRGAN, SwinIR, Real-ESRGAN, BSRNet
 │   ├── bsrnet/
@@ -67,8 +67,12 @@ Each subfolder includes its own `README.md` describing internal scripts and usag
 ## Reproducibility
 
 1. Download LCZ42 data and place it under `data/lcz42/`
-2. Run the preprocessing pipelines (Matlab / DenseNet201 / ResNet18 → Super-Resolution → TDA → Distillation).
-3. Export and deploy trained models using scripts in deployment/.
+2. Reproduce teacher ensembles:
+   - `densenet201_ensembles/` for baseline DenseNet teachers (Rand, RandRGB, SAR + full sum rule)
+   - `resnet18_ensembles/` for comparable ResNet teachers
+   - `fusion_ensembles/` for DenseNet201 + TDA fusion across baseline/SR inputs
+3. (Optional) generate super-resolution upscales in `super_resolution/` and TDA descriptors in `tda/`
+4. Distil/compress models (`distillation/`) and export to Metis (`deployment/`)
 
 ## Citation
 

@@ -108,13 +108,32 @@ Public datasets, including the super-resolution enhanced versions, are hosted on
 
 **Funding**: ERC Starting Grant “So2Sat: Big Data for 4D Global Urban Mapping”
 
+## Citation
+
+If you use this repository or derived datasets in your research, please cite:
+
+```bibtex
+@mastersthesis{rambaldi2025enhancedlcz42,
+  title        = {Enhanced LCZ42 Ensembles to Edge AI: Knowledge Distillation and Deployment on Axelera Metis},
+  author       = {Rambaldi, Matteo},
+  school       = {University of Padua},
+  year         = {2025},
+  note         = {GitHub Repository: https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis}
+}
+```
+
+## License
+
+This project is released under the MIT License.
+See the LICENSE file for details.
+
 ## Author & Supervision
 
 Matteo Rambaldi — MSc Artificial Intelligence, University of Padua\
 Supervised by Prof. Loris Nanni\
 Co-Supervisor: Eng. Cristian Garjitzky
 
-## License
+## License Original Dataset So2Sat LCZ42
 
 The original So2Sat LCZ42 dataset is © TUM/DLR and distributed under their specified terms.  
 All super-resolved derivatives included here are released for **non-commercial research use** only.
