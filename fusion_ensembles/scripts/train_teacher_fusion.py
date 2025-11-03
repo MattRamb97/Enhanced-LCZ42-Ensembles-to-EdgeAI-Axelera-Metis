@@ -20,14 +20,14 @@ SEED = 42
 DATA_ROOT = "../../data/lcz42"
 TDA_ROOT = "../../TDA/data"
 SAVE_DIR = "../models/trained"
-EPOCHS = 12
+EPOCHS = 10
 BATCH_SIZE = 512
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
 LABEL_SMOOTHING = 0.1
 USE_ZSCORE = True
 USE_SAR_DESPECKLE = True
-USE_AUG = False
+USE_AUG = True
 
 METHODS_MS = [
     ("", "baseline1"),
@@ -42,10 +42,7 @@ METHODS_MS = [
     ("_realesrgan4x", "realesrgan4x"),
 ]
 
-METHODS_SAR = [
-    ("", "baseline1"),
-    ("", "baseline2"),
-]
+METHODS_SAR = list(METHODS_MS)
 
 
 # ---------------- Utilities ---------------- #
@@ -161,6 +158,7 @@ def _compute_sumrule(
             "summary": json.dumps(summary),
             "classification_report": json.dumps(report),
         },
+        probs=fused_probs,
     )
 
     with open(os.path.join(result_dir, f"{tag}_summary.json"), "w") as f:
@@ -192,6 +190,7 @@ def train_teacher_fusion(mode="ALL"):
         useZscore=USE_ZSCORE,
         useSARdespeckle=USE_SAR_DESPECKLE,
         useAugmentation=USE_AUG,
+        resizeTo=(224, 224),
     )
 
     ensemble_outputs: Dict[str, List[Dict]] = {}
@@ -325,6 +324,7 @@ def train_teacher_fusion(mode="ALL"):
                     "summary": json.dumps(summary),
                     "classification_report": json.dumps(report),
                 },
+                probs=result["probs"],
             )
 
             pd.DataFrame(history).to_csv(os.path.join(mode_dir, f"{model_name}_history.csv"), index=False)

@@ -8,7 +8,18 @@ def _np_string(value: str):
         string_ctor = np.bytes_
     return string_ctor(value)
 
-def save_h5_results(h5_path, name, classes, top1, cm, y_true, y_pred, history=None, extra=None):
+def save_h5_results(
+    h5_path,
+    name,
+    classes,
+    top1,
+    cm,
+    y_true,
+    y_pred,
+    history=None,
+    extra=None,
+    probs=None,
+):
     if history is None:
         history = {}
     if extra is None:
@@ -20,6 +31,8 @@ def save_h5_results(h5_path, name, classes, top1, cm, y_true, y_pred, history=No
         f.create_dataset("confusionMat", data=cm.astype(np.int32))
         f.create_dataset("yTrue", data=y_true.astype(np.int32))
         f.create_dataset("yPred", data=y_pred.astype(np.int32))
+        if probs is not None:
+            f.create_dataset("probs", data=np.asarray(probs, dtype=np.float32))
 
         # class names
         dt = h5py.string_dtype(encoding="utf-8")

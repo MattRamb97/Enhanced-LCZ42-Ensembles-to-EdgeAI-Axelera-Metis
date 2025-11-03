@@ -2,7 +2,6 @@ import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from torchvision import transforms
 import cv2
 import random
 import pandas as pd
@@ -23,7 +22,7 @@ def apply_paper_scaling(x: np.ndarray, modality: str) -> np.ndarray:
     return x
 
 
-def compute_band_stats(table: pd.DataFrame, input_size=(32, 32)):
+def compute_band_stats(table: pd.DataFrame):
     """Compute per-channel mean/std after paper scaling (TRAIN only)."""
     acc_mu, acc_sq, n_pix, C = None, None, 0, None
     for i, row in tqdm(enumerate(table.itertuples()), total=len(table), desc="Computing μ/σ"):
@@ -31,7 +30,6 @@ def compute_band_stats(table: pd.DataFrame, input_size=(32, 32)):
             dset = f["/sen1" if row.Modality.upper() == "SAR" else "/sen2"]
             patch = dset[int(row.Index)]
         X = apply_paper_scaling(patch, row.Modality)
-        X = cv2.resize(X, input_size, interpolation=cv2.INTER_NEAREST)
         C = X.shape[-1]
         x = X.reshape(-1, C).astype(np.float64)
         if acc_mu is None:
@@ -90,7 +88,7 @@ class So2SatDataset(Dataset):
     def __init__(
         self,
         table: pd.DataFrame,
-        input_size=(32, 32),
+        resize_to=None,
         use_zscore=False,
         mu=None,
         sigma=None,
@@ -101,7 +99,7 @@ class So2SatDataset(Dataset):
     ):
         super().__init__()
         self.table = table.reset_index(drop=True)
-        self.input_size = input_size
+        self.resize_to = resize_to
         self.use_zscore = use_zscore
         self.mu = mu
         self.sigma = sigma
@@ -131,12 +129,18 @@ class So2SatDataset(Dataset):
         if self.use_zscore and self.mu is not None and self.sigma is not None:
             X = (X - self.mu) / (self.sigma + 1e-6)
 
-        # Resize
-        X = cv2.resize(X, self.input_size, interpolation=cv2.INTER_NEAREST)
-
         # Augment
         if self.use_augmentation:
             X = augment_aligned(X)
+
+        if self.resize_to is not None:
+            target_w, target_h = self.resize_to
+            if (X.shape[1], X.shape[0]) != (target_w, target_h):
+                if target_w > X.shape[1] or target_h > X.shape[0]:
+                    interp = cv2.INTER_CUBIC
+                else:
+                    interp = cv2.INTER_AREA
+                X = cv2.resize(X, (target_w, target_h), interpolation=interp)
 
         # To tensor (C,H,W), float32 in [0,1]
         X = torch.tensor(X, dtype=torch.float32).permute(2, 0, 1)
@@ -156,13 +160,13 @@ def DatasetReading(cfg: dict):
     Python equivalent of MATLAB DatasetReading.m
     cfg keys:
         trainTable, testTable  -> pandas DataFrames
-        inputSize, useZscore, useSARdespeckle, useAugmentation
+        resizeTo, useZscore, useSARdespeckle, useAugmentation
         calibrationFrac, randomSeed
     """
     random_seed = cfg.get("randomSeed", 42)
     torch.manual_seed(random_seed)
     np.random.seed(random_seed)
-    input_size = cfg.get("inputSize", (32, 32))
+    resize_to = cfg.get("resizeTo")
     use_zscore = cfg.get("useZscore", False)
     use_sar = cfg.get("useSARdespeckle", False)
     use_aug = cfg.get("useAugmentation", False)
@@ -171,12 +175,12 @@ def DatasetReading(cfg: dict):
     test_table = cfg["testTable"]
 
     print("[DatasetReading] Computing per-channel μ/σ on TRAIN…")
-    mu, sigma, C = compute_band_stats(train_table, input_size)
+    mu, sigma, C = compute_band_stats(train_table)
     print(f"  -> Channels: {C} | μ/σ computed.")
 
     dsTrain = So2SatDataset(
         train_table,
-        input_size=input_size,
+        resize_to=resize_to,
         use_zscore=use_zscore,
         mu=mu,
         sigma=sigma,
@@ -187,7 +191,7 @@ def DatasetReading(cfg: dict):
 
     dsTest = So2SatDataset(
         test_table,
-        input_size=input_size,
+        resize_to=resize_to,
         use_zscore=use_zscore,
         mu=mu,
         sigma=sigma,
@@ -212,7 +216,7 @@ def DatasetReading(cfg: dict):
         classes_str=[str(c) for c in classes],
         mu=mu,
         sigma=sigma,
-        inputSize=input_size,
+        resizeTo=resize_to,
         classCounts=class_counts,
         classWeights=class_weights.astype(np.float32),
     )
