@@ -28,6 +28,7 @@ WEIGHT_DECAY = 1e-4
 USE_ZSCORE = True
 USE_SAR_DESPECKLE = True
 USE_AUG = True
+INPUT_SIZE = (224, 224)
 
 
 def setup_seed(seed=42):
@@ -122,6 +123,7 @@ def train_teacher_densenet201(mode="ALL"):
         useZscore=USE_ZSCORE,
         useSARdespeckle=USE_SAR_DESPECKLE,
         useAugmentation=USE_AUG,
+        inputSize=INPUT_SIZE,
     )
 
     do_rand = mode in ["RAND", "ALL"]
