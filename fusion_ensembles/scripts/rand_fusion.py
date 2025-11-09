@@ -78,6 +78,10 @@ def train_fusion_member(cfg: Dict):
     ds_test_ms = cfg["dsTest"]
     ds_train_sar = cfg.get("dsTrainSAR")
     ds_test_sar = cfg.get("dsTestSAR")
+    print(
+        f"[INFO] Training setup → mode={mode} batch_size={cfg['miniBatchSize']} "
+        f"num_workers={cfg['numWorkers']}"
+    )
 
     sample_ms, _ = ds_train_ms[0]
     num_bands_ms = sample_ms.shape[0]
@@ -187,8 +191,13 @@ def train_fusion_member(cfg: Dict):
     label_smoothing = cfg.get("labelSmoothing", 0.0)
     criterion = nn.CrossEntropyLoss(weight=weight_tensor, label_smoothing=label_smoothing)
     weight_decay = cfg.get("weightDecay", 1e-4)
-    optimizer = optim.AdamW(model.parameters(), lr=cfg["learnRate"], weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5)
+    momentum = cfg.get("momentum", 0.9)
+    optimizer = optim.SGD(
+        model.parameters(),
+        lr=cfg["learnRate"],
+        momentum=momentum,
+        weight_decay=weight_decay,
+    )
 
     history = {"loss": [], "acc": []}
 
@@ -213,8 +222,6 @@ def train_fusion_member(cfg: Dict):
         epoch_acc = correct / total
         history["loss"].append(epoch_loss)
         history["acc"].append(epoch_acc)
-        scheduler.step(epoch_loss)
-
         print(f"[Epoch {epoch+1}] Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}")
 
     # ---------------- Evaluation ---------------- #

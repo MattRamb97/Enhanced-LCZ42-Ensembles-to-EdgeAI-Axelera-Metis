@@ -1,7 +1,9 @@
+import os
+import time
 import h5py
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, get_worker_info
 import cv2
 import random
 import pandas as pd
@@ -25,8 +27,12 @@ def apply_paper_scaling(x: np.ndarray, modality: str) -> np.ndarray:
 def compute_band_stats(table: pd.DataFrame):
     """Compute per-channel mean/std after paper scaling (TRAIN only)."""
     acc_mu, acc_sq, n_pix, C = None, None, 0, None
+    base_dir = os.getcwd()
     for i, row in tqdm(enumerate(table.itertuples()), total=len(table), desc="Computing μ/σ"):
-        with h5py.File(row.Path, "r") as f:
+        path = os.path.expanduser(str(row.Path))
+        if not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(base_dir, path))
+        with h5py.File(path, "r") as f:
             dset = f["/sen1" if row.Modality.upper() == "SAR" else "/sen2"]
             patch = dset[int(row.Index)]
         X = apply_paper_scaling(patch, row.Modality)
@@ -106,17 +112,84 @@ class So2SatDataset(Dataset):
         self.use_sar_despeckle = use_sar_despeckle
         self.use_augmentation = use_augmentation
         self.to_gpu = to_gpu
+        self._base_dir = os.getcwd()
+        self.table["Path"] = self.table["Path"].map(self._resolve_path)
+        self._file_handles = {}
         random.seed(random_seed)
         np.random.seed(random_seed)
 
     def __len__(self):
         return len(self.table)
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_file_handles"] = {}
+        return state
+
+    def __del__(self):
+        try:
+            self._cleanup_handles()
+        except Exception:
+            pass
+
+    def _resolve_path(self, path: str) -> str:
+        path = os.path.expanduser(str(path))
+        if not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(self._base_dir, path))
+        return path
+
+    def _cleanup_handles(self):
+        for worker_cache in self._file_handles.values():
+            for handle in worker_cache.values():
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+        self._file_handles.clear()
+
+    def _close_file_handle(self, worker_id, path):
+        worker_cache = self._file_handles.get(worker_id, {})
+        handle = worker_cache.pop(path, None)
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                pass
+
+    def _get_file_handle(self, path: str):
+        worker = get_worker_info()
+        worker_id = worker.id if worker is not None else "main"
+        worker_cache = self._file_handles.setdefault(worker_id, {})
+        handle = worker_cache.get(path)
+        if handle is None or not handle.id.valid:
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+            handle = h5py.File(path, "r")
+            worker_cache[path] = handle
+        return worker_id, handle
+
+    def _read_patch(self, path: str, dataset_key: str, index: int, retries: int = 3):
+        last_error = None
+        for attempt in range(retries):
+            worker_id, handle = self._get_file_handle(path)
+            try:
+                return handle[dataset_key][index]
+            except OSError as err:
+                last_error = err
+                self._close_file_handle(worker_id, path)
+                time.sleep(0.1 * (attempt + 1))
+        raise OSError(
+            f"Failed to read '{dataset_key}' at index {index} from {path} after {retries} attempts"
+        ) from last_error
+
     def __getitem__(self, idx):
         row = self.table.iloc[idx]
         modality = row["Modality"].upper()
-        with h5py.File(row["Path"], "r") as f:
-            X = f["/sen1" if modality == "SAR" else "/sen2"][int(row["Index"])]
+        dataset_key = "/sen1" if modality == "SAR" else "/sen2"
+        X = self._read_patch(row["Path"], dataset_key, int(row["Index"]))
 
         X = apply_paper_scaling(X, modality)
 

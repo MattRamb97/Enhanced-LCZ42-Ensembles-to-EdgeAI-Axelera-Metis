@@ -20,14 +20,17 @@ SEED = 42
 DATA_ROOT = "../../data/lcz42"
 TDA_ROOT = "../../TDA/data"
 SAVE_DIR = "../models/trained"
-EPOCHS = 10
-BATCH_SIZE = 512
+EPOCHS = 12
+BATCH_SIZE = 128  # 512 overflowed with fusion inputs; keep 128 for stability
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-LABEL_SMOOTHING = 0.1
+LABEL_SMOOTHING = 0.0
 USE_ZSCORE = True
 USE_SAR_DESPECKLE = True
 USE_AUG = True
+NUM_WORKERS = 4
+OPTIMIZER_NAME = "SGD(momentum=0.9)"
+SCHEDULER_NAME = "None"
 
 METHODS_MS = [
     ("", "baseline1"),
@@ -239,7 +242,7 @@ def train_teacher_fusion(mode="ALL"):
                 weightDecay=WEIGHT_DECAY,
                 labelSmoothing=LABEL_SMOOTHING,
                 rngSeed=SEED,
-                numWorkers=0,
+                numWorkers=NUM_WORKERS,
                 device=device,
                 tdaTrainPath=tda_train_path,
                 tdaTestPath=tda_test_path,
@@ -291,8 +294,8 @@ def train_teacher_fusion(mode="ALL"):
                 "learning_rate": LEARNING_RATE,
                 "weight_decay": WEIGHT_DECAY,
                 "label_smoothing": LABEL_SMOOTHING,
-                "optimizer": "AdamW",
-                "scheduler": "ReduceLROnPlateau",
+                "optimizer": OPTIMIZER_NAME,
+                "scheduler": SCHEDULER_NAME,
                 "final_top1": float(top1),
                 "accuracy": float(report.get("accuracy", top1)),
                 "macro_precision": float(macro_avg.get("precision", 0.0)),

@@ -9,6 +9,7 @@
 *.tgz
 *.rar
 *.mat
+*.pdf
 
 # === Python & Build Artifacts ===
 __pycache__/
@@ -53,6 +54,8 @@ coverage.*
 htmlcov/
 pytest_cache/
 nosetests.xml
+*.csv
+*.json
 
 # === MATLAB Temp Files ===
 *.asv

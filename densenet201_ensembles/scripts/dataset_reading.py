@@ -7,6 +7,7 @@ import cv2
 import random
 import pandas as pd
 from tqdm import tqdm
+import time
 
 # -----------------------------------------------------
 # Helper functions
@@ -27,9 +28,7 @@ def compute_band_stats(table: pd.DataFrame, input_size=(32, 32)):
     """Compute per-channel mean/std after paper scaling (TRAIN only)."""
     acc_mu, acc_sq, n_pix, C = None, None, 0, None
     for i, row in tqdm(enumerate(table.itertuples()), total=len(table), desc="Computing μ/σ"):
-        with h5py.File(row.Path, "r") as f:
-            dset = f["/sen1" if row.Modality.upper() == "SAR" else "/sen2"]
-            patch = dset[int(row.Index)]
+        patch = _read_h5_patch(row.Path, int(row.Index), row.Modality)
         X = apply_paper_scaling(patch, row.Modality)
         X = cv2.resize(X, input_size, interpolation=cv2.INTER_NEAREST)
         C = X.shape[-1]
@@ -117,8 +116,7 @@ class So2SatDataset(Dataset):
     def __getitem__(self, idx):
         row = self.table.iloc[idx]
         modality = row["Modality"].upper()
-        with h5py.File(row["Path"], "r") as f:
-            X = f["/sen1" if modality == "SAR" else "/sen2"][int(row["Index"])]
+        X = _read_h5_patch(row["Path"], int(row["Index"]), modality)
 
         X = apply_paper_scaling(X, modality)
 
@@ -211,3 +209,22 @@ def DatasetReading(cfg: dict):
 
     print(f"[DatasetReading] Done. TRAIN {len(dsTrain)} | TEST {len(dsTest)}.")
     return dsTrain, dsTest, info
+MAX_H5_RETRIES = 5
+RETRY_BACKOFF_SEC = 1.5
+
+
+def _read_h5_patch(path: str, index: int, modality: str) -> np.ndarray:
+    """Robust HDF5 reader with retry logic to mitigate transient NFS errors."""
+    last_err: OSError | None = None
+    dataset_key = "/sen1" if modality.upper() == "SAR" else "/sen2"
+    for attempt in range(MAX_H5_RETRIES):
+        try:
+            with h5py.File(path, "r") as f:
+                return f[dataset_key][index]
+        except OSError as err:
+            last_err = err
+            sleep_time = RETRY_BACKOFF_SEC * (attempt + 1)
+            print(f"[WARN] HDF5 read failed ({err}). Retry {attempt + 1}/{MAX_H5_RETRIES} in {sleep_time:.1f}s.",
+                  flush=True)
+            time.sleep(sleep_time)
+    raise last_err if last_err is not None else OSError(f"Unable to read {path} after {MAX_H5_RETRIES} retries.")
