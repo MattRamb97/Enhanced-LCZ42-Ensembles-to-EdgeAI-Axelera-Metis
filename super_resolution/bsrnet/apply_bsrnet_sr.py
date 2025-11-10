@@ -2,6 +2,9 @@ import os, gc, h5py, torch, numpy as np
 from tqdm import tqdm
 from bsrnet_model import define_model
 
+LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+EPS = 1e-6
+
 # ---------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------
@@ -19,7 +22,7 @@ INPUT_FILES = [
     os.path.join(DATA_DIR, "testing.h5")
 ]
 
-BATCH_SIZE = 1024               # Adjust for VRAM (A40: 1024 works fine)
+BATCH_SIZE = 512               # Adjust for VRAM (A40: 1024 works fine)
 
 # ---------------------------------------------------------------
 # Load pretrained model
@@ -46,9 +49,26 @@ def process_batch(batch_tensor):
     with torch.no_grad():
         sr = model(batch_tensor.to(DEVICE))
     sr = sr.cpu().clamp(0, 1).numpy()  # (B*C,3,Hs,Ws)
-    # Convert back to grayscale [0,2.8]
-    sr_gray = sr[:, 0, :, :].astype(np.float32) * 2.8
+    # Collapse RGB generator output back to single-band reflectance via luminance.
+    sr_gray = np.tensordot(sr, LUMA_WEIGHTS, axes=([1], [0])).astype(np.float32)
+    sr_gray *= 2.8  # undo normalization to physical range
     return sr_gray
+
+
+def match_lr_statistics(sr_stack, lr_stack, scale_factor):
+    """Per-band gain/bias so SR downsample matches LR mean/std (prevents dark panels)."""
+    B, C, Hs, Ws = sr_stack.shape
+    _, _, H, W = lr_stack.shape
+    sr_stack = sr_stack.reshape(B, C, H, scale_factor, W, scale_factor)
+    sr_down = sr_stack.mean(axis=(3, 5))  # (B, C, H, W)
+    sr_stack = sr_stack.reshape(B, C, Hs, Ws)
+
+    gains = (lr_stack.std(axis=(2, 3), keepdims=True) /
+             (sr_down.std(axis=(2, 3), keepdims=True) + EPS))
+    biases = lr_stack.mean(axis=(2, 3), keepdims=True) - gains * sr_down.mean(axis=(2, 3), keepdims=True)
+
+    sr_corrected = sr_stack * gains + biases
+    return np.clip(sr_corrected, 0.0, 2.8)
 
 # ---------------------------------------------------------------
 # Process datasets (batched, CUDA-optimized)
@@ -77,6 +97,8 @@ for input_h5 in INPUT_FILES:
                 x = prepare_rgb_batch(patch_batch)  # (B*C,3,H,W)
                 sr_gray = process_batch(x)          # (B*C,Hs,Ws)
                 sr_gray = sr_gray.reshape(B, C, H*SCALE, W*SCALE)
+                lr_stack = patch_batch.transpose(0, 3, 1, 2)  # (B,C,H,W)
+                sr_gray = match_lr_statistics(sr_gray, lr_stack, SCALE)
 
                 # ---- Reorder back (B,Hs,Ws,C)
                 sr_gray = sr_gray.transpose(0, 2, 3, 1)

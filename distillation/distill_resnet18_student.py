@@ -324,7 +324,6 @@ def train(args: argparse.Namespace) -> None:
     optimizer = optim.AdamW(student.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-    best_acc = 0.0
     os.makedirs(args.output_dir, exist_ok=True)
     history = []
 
@@ -347,7 +346,7 @@ def train(args: argparse.Namespace) -> None:
                 teacher_logits,
                 labels,
                 alpha=args.alpha,
-                temperature=args.temperature,
+                temperature=1.0,
             )
 
             optimizer.zero_grad()
@@ -364,33 +363,27 @@ def train(args: argparse.Namespace) -> None:
         train_loss = running_loss / len(train_dataset)
         train_hard = hard_loss / len(train_dataset)
         train_soft = soft_loss / len(train_dataset)
-        val_acc = evaluate(student, val_loader, device)
         history.append(
             dict(
                 epoch=epoch,
                 train_loss=train_loss,
                 hard=train_hard,
                 soft=train_soft,
-                val_acc=val_acc,
                 lr=scheduler.get_last_lr()[0],
             )
         )
 
         print(
             f"[Epoch {epoch}] loss={train_loss:.4f} hard={train_hard:.4f} "
-            f"soft={train_soft:.4f} val_acc={val_acc:.4f}"
+            f"soft={train_soft:.4f}"
         )
-
-        if val_acc > best_acc:
-            best_acc = val_acc
-            best_path = Path(args.output_dir) / "student_resnet18_best.pth"
-            torch.save(student.state_dict(), best_path)
-            print(f"[✓] Saved new best model to {best_path} (val_acc={val_acc:.4f})")
+        checkpoint_path = Path(args.output_dir) / f"student_resnet18_epoch{epoch:02d}.pth"
+        torch.save(student.state_dict(), checkpoint_path)
 
     history_path = Path(args.output_dir) / "kd_history.json"
     with open(history_path, "w") as f:
-        json.dump(dict(history=history, best_acc=best_acc), f, indent=2)
-    print(f"[INFO] Training complete. Best val_acc={best_acc:.4f}")
+        json.dump(dict(history=history), f, indent=2)
+    print(f"[INFO] Training complete. Checkpoints saved under {args.output_dir}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -409,8 +402,7 @@ def parse_args() -> argparse.Namespace:
         ),
         help="Path to the RAND ensemble checkpoint (.pth).",
     )
-    parser.add_argument("--output-dir", type=str, default=str(Path("distillation") / "checkpoints"))
-    parser.add_argument("--temperature", type=float, default=2.0)
+    parser.add_argument("--output-dir", type=str, default=str(Path("checkpoints")))
     parser.add_argument("--alpha", type=float, default=0.7)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)

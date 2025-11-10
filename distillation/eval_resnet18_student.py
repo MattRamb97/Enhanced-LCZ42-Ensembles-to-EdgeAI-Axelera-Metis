@@ -104,6 +104,8 @@ def main() -> None:
 
     rgb_mu = torch.tensor(info["mu"], dtype=torch.float32)[list(args.rgb_indices)]
     rgb_sigma = torch.tensor(info["sigma"], dtype=torch.float32)[list(args.rgb_indices)]
+    print("[INFO] RGB mean :", rgb_mu.tolist())
+    print("[INFO] RGB std  :", rgb_sigma.tolist())
 
     val_dataset = KDPairedDataset(
         ds_val,
