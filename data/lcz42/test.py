@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 DATASETS = [
     "testing.h5",
     "testing_bsrnet2x.h5",
-    "testing_bsrnet2x_v2.h5",
     "testing_edsr2x.h5",
     "testing_edsr4x.h5",
     "testing_esrgan2x.h5",
@@ -15,7 +14,7 @@ DATASETS = [
     "testing_vdsr3x.h5",
 ]
 
-PATCH_INDEX = 4  # patch n°5
+PATCH_INDEX = 4 # 638
 
 
 def preprocess(patch):
@@ -33,11 +32,17 @@ for fname in DATASETS:
         patch = f["sen2"][PATCH_INDEX]
     images.append((preprocess(patch), fname))
 
-fig, axes = plt.subplots(2, 4, figsize=(12, 6))
-for ax, (img, title) in zip(axes.flat, images[:8]):
+rows = 2
+cols = int(np.ceil(len(images) / rows))
+fig, axes = plt.subplots(rows, cols, figsize=(cols * 2.5, rows * 3))
+axes = axes.flatten()
+for ax, (img, title) in zip(axes, images):
     ax.imshow(img)
     ax.axis("off")
     ax.set_title(title, fontsize=8)
+
+for ax in axes[len(images) :]:
+    ax.axis("off")
 
 plt.tight_layout()
 plt.show()
