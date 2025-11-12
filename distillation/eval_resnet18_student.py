@@ -5,7 +5,6 @@ Reuses the same dataset utilities defined for training to ensure identical prepr
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import torch
@@ -21,56 +20,18 @@ from distill_resnet18_student import (  # type: ignore
     _select_device,
 )
 
+# --------------------------------------------------------------------------------------
+# Configuration (hardcoded for reproducibility)
+# --------------------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESNET_SCRIPTS = REPO_ROOT / "resnet18_ensembles" / "scripts"
+DATA_ROOT = REPO_ROOT / "data" / "lcz42"
+CHECKPOINT_PATH = Path(__file__).resolve().parent / "checkpoints" / "student_resnet18_last.pth"
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate distilled ResNet18 student on LCZ42.")
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=str(Path("checkpoints") / "student_resnet18_best.pth"),
-        help="Path to the student checkpoint (.pth).",
-    )
-    parser.add_argument(
-        "--data-root",
-        type=str,
-        default=str(REPO_ROOT / "data" / "lcz42"),
-        help="Directory containing tables_MS.mat and HDF5 files.",
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=512, help="Evaluation batch size (default: 512)."
-    )
-    parser.add_argument(
-        "--num-workers", type=int, default=8, help="DataLoader worker count (default: 8)."
-    )
-    parser.add_argument(
-        "--rgb-indices",
-        type=int,
-        nargs=3,
-        default=(3, 2, 1),
-        help="Zero-based Sentinel-2 indices to form the RGB composite.",
-    )
-    parser.add_argument(
-        "--apply-rgb-zscore",
-        action="store_true",
-        help="Use the μ/σ stats from DatasetReading on the selected RGB channels.",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="auto",
-        choices=["auto", "cpu", "cuda", "mps"],
-        help="Device selection (default: auto).",
-    )
-    parser.add_argument(
-        "--loader-workers",
-        type=int,
-        default=12,
-        help="Worker count for DatasetReading internals (default: 12).",
-    )
-    return parser.parse_args()
+RGB_INDICES = (2, 1, 0)  # Sentinel-2 B4/B3/B2 (R/G/B)
+BATCH_SIZE = 512
+NUM_WORKERS = 8
+DEVICE = "auto"  # auto, cpu, cuda, mps
 
 
 def build_student(num_classes: int, checkpoint_path: Path) -> nn.Module:
@@ -82,14 +43,11 @@ def build_student(num_classes: int, checkpoint_path: Path) -> nn.Module:
 
 
 def main() -> None:
-    args = parse_args()
-    data_root = Path(args.data_root)
-    table_path = data_root / "tables_MS.mat"
+    table_path = DATA_ROOT / "tables_MS.mat"
     train_table, test_table = load_table_mat(table_path, "train_MS", "test_MS")
     train_table = _resolve_table_paths(train_table, RESNET_SCRIPTS)
     test_table = _resolve_table_paths(test_table, RESNET_SCRIPTS)
 
-    torch.set_num_threads(max(1, args.loader_workers))
     _, ds_val, info = DatasetReading(
         dict(
             trainTable=train_table,
@@ -98,34 +56,31 @@ def main() -> None:
             useSARdespeckle=False,
             useAugmentation=False,
             inputSize=(224, 224),
-            numWorkers=args.loader_workers,
         )
     )
 
-    rgb_mu = torch.tensor(info["mu"], dtype=torch.float32)[list(args.rgb_indices)]
-    rgb_sigma = torch.tensor(info["sigma"], dtype=torch.float32)[list(args.rgb_indices)]
-    print("[INFO] RGB mean :", rgb_mu.tolist())
-    print("[INFO] RGB std  :", rgb_sigma.tolist())
+    # DEBUG: Print μ/σ computed by DatasetReading
+    mu_actual = info.get("mu")
+    sigma_actual = info.get("sigma")
+    if mu_actual is not None:
+        print(f"[DEBUG] DatasetReading computed μ: {mu_actual.tolist()}")
+        print(f"[DEBUG] DatasetReading computed σ: {sigma_actual.tolist()}")
 
-    val_dataset = KDPairedDataset(
-        ds_val,
-        args.rgb_indices,
-        rgb_mu=rgb_mu if args.apply_rgb_zscore else None,
-        rgb_sigma=rgb_sigma if args.apply_rgb_zscore else None,
-        rescale_factor=1.0 / 255.0,
-    )
-
+    val_dataset = KDPairedDataset(ds_val, RGB_INDICES)
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size,
+        batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=args.num_workers,
+        num_workers=NUM_WORKERS,
         pin_memory=False,
     )
 
-    device = _select_device(args.device)
+    device = _select_device(DEVICE)
     print(f"[INFO] Using device: {device}")
-    model = build_student(info["numClasses"], Path(args.checkpoint)).to(device)
+    print(f"[INFO] Checkpoint: {CHECKPOINT_PATH}")
+    print(f"[INFO] RGB indices: {RGB_INDICES}")
+
+    model = build_student(info["numClasses"], CHECKPOINT_PATH).to(device)
     model.eval()
 
     correct = 0
@@ -140,7 +95,7 @@ def main() -> None:
             total += labels.size(0)
 
     acc = correct / max(total, 1)
-    print(f"[RESULT] Validation accuracy: {acc:.4%} ({correct}/{total})")
+    print(f"[RESULT] Test accuracy: {acc:.4%} ({correct}/{total})")
 
 
 if __name__ == "__main__":

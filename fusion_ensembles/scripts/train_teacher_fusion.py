@@ -24,11 +24,13 @@ EPOCHS = 12
 BATCH_SIZE = 128  # 512 overflowed with fusion inputs; keep 128 for stability
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-LABEL_SMOOTHING = 0.0
+LABEL_SMOOTHING = 0.1
 USE_ZSCORE = True
 USE_SAR_DESPECKLE = True
 USE_AUG = True
-NUM_WORKERS = 4
+NUM_WORKERS = 8
+USE_TORCH_COMPILE = False  # Set to True to enable torch.compile (experimental on PyTorch 2.0.1)
+# NOTE: If running multiple jobs in parallel on NFS/NAS, reduce NUM_WORKERS to 2-4 to avoid I/O conflicts
 OPTIMIZER_NAME = "SGD(momentum=0.9)"
 SCHEDULER_NAME = "None"
 
@@ -243,6 +245,7 @@ def train_teacher_fusion(mode="ALL"):
                 labelSmoothing=LABEL_SMOOTHING,
                 rngSeed=SEED,
                 numWorkers=NUM_WORKERS,
+                useTorchCompile=USE_TORCH_COMPILE,
                 device=device,
                 tdaTrainPath=tda_train_path,
                 tdaTestPath=tda_test_path,

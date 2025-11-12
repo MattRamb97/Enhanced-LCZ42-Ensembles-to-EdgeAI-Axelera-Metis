@@ -124,13 +124,7 @@ def parse_args() -> argparse.Namespace:
         default=(3, 2, 1),
         help="Zero-based Sentinel-2 indices for RGB composite (default B4/B3/B2).",
     )
-    parser.add_argument(
-        "--rescale-factor",
-        type=float,
-        default=1.0 / 255.0,
-        help="Scalar applied to RGB tensor when z-score is not used.",
-    )
-    parser.add_argument("--apply-rgb-zscore", action="store_true")
+    # RGB tensors already z-scored by DatasetReading → no extra normalization flags.
     parser.add_argument("--student-pretrained", action="store_true")
     parser.add_argument("--use-sar-despeckle", action="store_true")
     parser.add_argument(
@@ -172,21 +166,13 @@ def train(args: argparse.Namespace) -> None:
         )
     )
 
-    rgb_mu = torch.tensor(info["mu"], dtype=torch.float32)[list(args.rgb_indices)]
-    rgb_sigma = torch.tensor(info["sigma"], dtype=torch.float32)[list(args.rgb_indices)]
     train_dataset = KDPairedDataset(
         ds_train,
         args.rgb_indices,
-        rgb_mu=rgb_mu if args.apply_rgb_zscore else None,
-        rgb_sigma=rgb_sigma if args.apply_rgb_zscore else None,
-        rescale_factor=args.rescale_factor,
     )
     val_dataset = KDPairedDataset(
         ds_val,
         args.rgb_indices,
-        rgb_mu=rgb_mu if args.apply_rgb_zscore else None,
-        rgb_sigma=rgb_sigma if args.apply_rgb_zscore else None,
-        rescale_factor=args.rescale_factor,
     )
 
     train_loader = torch.utils.data.DataLoader(

@@ -1,16 +1,19 @@
 """
-Offline knowledge distillation using the RAND ResNet18 ensemble as teacher and an RGB-only
-ResNet18 student. The teacher consumes the full multispectral Sentinel-2 stack, while the student
-receives a band-reduced RGB composite (b4-b3-b2). The script reuses the LCZ42 data tables and
-pre-processing defined for the ensemble training code.
+Offline knowledge distillation: RAND ResNet18 ensemble (teacher) -> RGB ResNet18 student.
+
+It mirrors the MATLAB training pipeline:
+  1. load MATLAB tables (train/test) and resolve paths
+  2. build DatasetReading datasets with paper scaling + z-score
+  3. sample RGB bands (B4/B3/B2 → indices 2/1/0 in Python order)
+  4. distill the teacher ensemble logits into a single ResNet18 student
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import random
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Tuple
@@ -26,17 +29,25 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.models import ResNet18_Weights, resnet18
 from tqdm import tqdm
 
-# Add ensemble script directory to import DatasetReading utilities
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESNET_SCRIPTS = REPO_ROOT / "resnet18_ensembles" / "scripts"
-import sys
-
 sys.path.append(str(RESNET_SCRIPTS))
 from dataset_reading import DatasetReading  # type: ignore
 
 
 # --------------------------------------------------------------------------------------
-# MATLAB table helpers (replicated from train_teacher_resnet18.py)
+# Constants / paths
+# --------------------------------------------------------------------------------------
+DATA_ROOT = REPO_ROOT / "data" / "lcz42"
+TEACHER_CHECKPOINT = (
+    REPO_ROOT / "resnet18_ensembles" / "models" / "trained" / "Rand_resnet18.pth"
+)
+OUTPUT_DIR = Path(__file__).resolve().parent / "checkpoints"
+RGB_INDICES = (2, 1, 0)  # Sentinel-2 B4/B3/B2 in zero-based Python indexing
+
+
+# --------------------------------------------------------------------------------------
+# MATLAB table helpers
 # --------------------------------------------------------------------------------------
 def _matlab_to_scalar(value) -> int:
     if isinstance(value, (int, np.integer)):
@@ -81,7 +92,6 @@ def load_table_mat(path: Path, train_key: str, test_key: str) -> Tuple[pd.DataFr
 
 
 def _resolve_table_paths(df: pd.DataFrame, base_dir: Path) -> pd.DataFrame:
-    """Ensure MATLAB-relative HDF5 paths become absolute paths rooted at the repo."""
     base_dir = base_dir.resolve()
     df = df.copy()
 
@@ -96,7 +106,7 @@ def _resolve_table_paths(df: pd.DataFrame, base_dir: Path) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------------------
-# Teacher architecture (identical to training code but with logits option)
+# Teacher ensemble
 # --------------------------------------------------------------------------------------
 class ResNet18MS(nn.Module):
     """ResNet18 backbone adapted to 3-band inputs."""
@@ -114,7 +124,7 @@ class ResNet18MS(nn.Module):
 
 
 class RandResNet18Teacher(nn.Module):
-    """Ensemble wrapper that returns either logits or averaged probabilities."""
+    """RAND ensemble wrapper that averages member logits."""
 
     def __init__(self, num_members: int, num_classes: int, bands_per_member: int = 3) -> None:
         super().__init__()
@@ -137,9 +147,7 @@ class RandResNet18Teacher(nn.Module):
 
 def build_teacher(checkpoint_path: Path) -> RandResNet18Teacher:
     state_dict = torch.load(checkpoint_path, map_location="cpu")
-    member_ids = sorted(
-        {int(key.split(".")[1]) for key in state_dict.keys() if key.startswith("models.")}
-    )
+    member_ids = sorted({int(key.split(".")[1]) for key in state_dict if key.startswith("models.")})
     num_members = len(member_ids)
     fc_key = next(k for k in state_dict.keys() if k.endswith("fc.weight"))
     num_classes = state_dict[fc_key].shape[0]
@@ -153,22 +161,16 @@ def build_teacher(checkpoint_path: Path) -> RandResNet18Teacher:
 # --------------------------------------------------------------------------------------
 class KDPairedDataset(Dataset):
     """
-    Returns both the full multispectral tensor (for teacher) and the RGB subset (for student).
+    Returns both the full multispectral tensor (teacher) and the RGB subset (student).
     """
 
     def __init__(
         self,
         base_dataset: Dataset,
         rgb_indices: Iterable[int],
-        rgb_mu: torch.Tensor | None,
-        rgb_sigma: torch.Tensor | None,
-        rescale_factor: float,
     ) -> None:
         self.base = base_dataset
         self.rgb_idx = torch.tensor(list(rgb_indices), dtype=torch.long)
-        self.rescale_factor = rescale_factor
-        self.rgb_mu = rgb_mu
-        self.rgb_sigma = rgb_sigma
 
     def __len__(self) -> int:
         return len(self.base)
@@ -176,15 +178,11 @@ class KDPairedDataset(Dataset):
     def __getitem__(self, idx: int):
         full_tensor, label = self.base[idx]  # (C_full, H, W)
         rgb = torch.index_select(full_tensor, dim=0, index=self.rgb_idx)
-        if self.rgb_mu is not None and self.rgb_sigma is not None:
-            rgb = (rgb - self.rgb_mu[:, None, None]) / (self.rgb_sigma[:, None, None] + 1e-6)
-        else:
-            rgb = rgb * self.rescale_factor
         return rgb, full_tensor, label
 
 
 # --------------------------------------------------------------------------------------
-# Loss / metrics
+# Loss / helpers
 # --------------------------------------------------------------------------------------
 def distillation_loss(
     student_logits: torch.Tensor,
@@ -201,24 +199,6 @@ def distillation_loss(
     return loss, {"hard": hard_loss.item(), "soft": soft_loss.item()}
 
 
-@torch.no_grad()
-def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
-    model.eval()
-    correct = 0
-    total = 0
-    for rgb, _, labels in loader:
-        rgb = rgb.to(device)
-        labels = labels.to(device)
-        logits = model(rgb)
-        preds = logits.argmax(dim=1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
-    return correct / max(total, 1)
-
-
-# --------------------------------------------------------------------------------------
-# Device helper
-# --------------------------------------------------------------------------------------
 def _select_device(request: str) -> torch.device:
     request = request.lower()
     supports_mps = getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
@@ -242,97 +222,92 @@ def _select_device(request: str) -> torch.device:
 
 
 # --------------------------------------------------------------------------------------
-# Training loop
+# Configuration
 # --------------------------------------------------------------------------------------
 @dataclass
 class KDConfig:
-    temperature: float = 2.0
+    data_root: Path = DATA_ROOT
+    teacher_checkpoint: Path = TEACHER_CHECKPOINT
+    output_dir: Path = OUTPUT_DIR
     alpha: float = 0.7
     lr: float = 2e-4
     weight_decay: float = 1e-4
     epochs: int = 30
     batch_size: int = 512
-    num_workers: int = 10
-    rgb_indices: Tuple[int, int, int] = (3, 2, 1)  # Sentinel-2 B4/B3/B2
-    rescale_factor: float = 1.0 / 255.0
+    num_workers: int = 8
+    seed: int = 42
+    rgb_indices: Tuple[int, int, int] = RGB_INDICES
+    student_pretrained: bool = False
+    use_sar_despeckle: bool = False
+    device: str = "auto"
 
 
-def train(args: argparse.Namespace) -> None:
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+# --------------------------------------------------------------------------------------
+# Training loop
+# --------------------------------------------------------------------------------------
+def distill_student(cfg: KDConfig | None = None) -> None:
+    cfg = cfg or KDConfig()
 
-    data_root = Path(args.data_root)
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+
+    data_root = Path(cfg.data_root).resolve()
+    teacher_ckpt = Path(cfg.teacher_checkpoint).resolve()
+    output_dir = Path(cfg.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     table_path = data_root / "tables_MS.mat"
     train_table, test_table = load_table_mat(table_path, "train_MS", "test_MS")
     train_table = _resolve_table_paths(train_table, RESNET_SCRIPTS)
     test_table = _resolve_table_paths(test_table, RESNET_SCRIPTS)
-    ds_train, ds_val, info = DatasetReading(
+
+    ds_train, _, info = DatasetReading(
         dict(
             trainTable=train_table,
             testTable=test_table,
             useZscore=True,
-            useSARdespeckle=args.use_sar_despeckle,
+            useSARdespeckle=cfg.use_sar_despeckle,
             useAugmentation=True,
             inputSize=(224, 224),
         )
     )
 
-    rgb_mu = torch.tensor(info["mu"], dtype=torch.float32)[list(args.rgb_indices)]
-    rgb_sigma = torch.tensor(info["sigma"], dtype=torch.float32)[list(args.rgb_indices)]
-    train_dataset = KDPairedDataset(
-        ds_train,
-        args.rgb_indices,
-        rgb_mu=rgb_mu if args.apply_rgb_zscore else None,
-        rgb_sigma=rgb_sigma if args.apply_rgb_zscore else None,
-        rescale_factor=args.rescale_factor,
-    )
-    val_dataset = KDPairedDataset(
-        ds_val,
-        args.rgb_indices,
-        rgb_mu=rgb_mu if args.apply_rgb_zscore else None,
-        rgb_sigma=rgb_sigma if args.apply_rgb_zscore else None,
-        rescale_factor=args.rescale_factor,
-    )
-
+    train_dataset = KDPairedDataset(ds_train, cfg.rgb_indices)
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=cfg.batch_size,
         shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
+        num_workers=cfg.num_workers,
         pin_memory=True,
     )
 
-    teacher = build_teacher(Path(args.teacher_checkpoint))
-    device = _select_device(args.device)
-    print(f"[INFO] Using device: {device}")
-    teacher.to(device).eval()
+    device = _select_device(cfg.device)
+    teacher = build_teacher(teacher_ckpt).to(device).eval()
     for p in teacher.parameters():
         p.requires_grad = False
 
-    student = resnet18(weights=ResNet18_Weights.DEFAULT if args.student_pretrained else None)
+    student = resnet18(weights=ResNet18_Weights.DEFAULT if cfg.student_pretrained else None)
     student.fc = nn.Linear(student.fc.in_features, info["numClasses"])
     student.to(device)
 
-    optimizer = optim.AdamW(student.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    optimizer = optim.AdamW(student.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.epochs)
 
-    os.makedirs(args.output_dir, exist_ok=True)
     history = []
+    best_loss = float("inf")
+    best_path = output_dir / "student_resnet18_best.pth"
 
-    for epoch in range(1, args.epochs + 1):
+    print(f"[INFO] Using device: {device}")
+    print(f"[INFO] Training samples: {len(train_dataset)}")
+
+    for epoch in range(1, cfg.epochs + 1):
         student.train()
         running_loss = 0.0
         hard_loss = 0.0
         soft_loss = 0.0
-        for rgb, full, labels in tqdm(train_loader, desc=f"Epoch {epoch}/{args.epochs}"):
+
+        for rgb, full, labels in tqdm(train_loader, desc=f"[Epoch {epoch}/{cfg.epochs}]"):
             rgb = rgb.to(device, non_blocking=True)
             full = full.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
@@ -345,8 +320,8 @@ def train(args: argparse.Namespace) -> None:
                 student_logits,
                 teacher_logits,
                 labels,
-                alpha=args.alpha,
-                temperature=1.0,
+                alpha=cfg.alpha,
+                temperature=3.0,
             )
 
             optimizer.zero_grad()
@@ -374,76 +349,27 @@ def train(args: argparse.Namespace) -> None:
         )
 
         print(
-            f"[Epoch {epoch}] loss={train_loss:.4f} hard={train_hard:.4f} "
-            f"soft={train_soft:.4f}"
+            f"[Epoch {epoch}] loss={train_loss:.4f} hard={train_hard:.4f} soft={train_soft:.4f}"
         )
-        checkpoint_path = Path(args.output_dir) / f"student_resnet18_epoch{epoch:02d}.pth"
-        torch.save(student.state_dict(), checkpoint_path)
 
-    history_path = Path(args.output_dir) / "kd_history.json"
+        epoch_ckpt = output_dir / f"student_resnet18_epoch{epoch:02d}.pth"
+        torch.save(student.state_dict(), epoch_ckpt)
+        if train_loss < best_loss:
+            best_loss = train_loss
+            torch.save(student.state_dict(), best_path)
+
+    history_path = output_dir / "kd_history.json"
     with open(history_path, "w") as f:
-        json.dump(dict(history=history), f, indent=2)
-    print(f"[INFO] Training complete. Checkpoints saved under {args.output_dir}")
+        json.dump(dict(history=history, best_loss=best_loss), f, indent=2)
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Offline KD for ResNet18 student (RGB-only).")
-    parser.add_argument(
-        "--data-root",
-        type=str,
-        default=str(REPO_ROOT / "data" / "lcz42"),
-        help="Directory containing tables_MS.mat",
-    )
-    parser.add_argument(
-        "--teacher-checkpoint",
-        type=str,
-        default=str(
-            REPO_ROOT / "resnet18_ensembles" / "models" / "trained" / "Rand_resnet18.pth"
-        ),
-        help="Path to the RAND ensemble checkpoint (.pth).",
-    )
-    parser.add_argument("--output-dir", type=str, default=str(Path("checkpoints")))
-    parser.add_argument("--alpha", type=float, default=0.7)
-    parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument(
-        "--rgb-indices",
-        type=int,
-        nargs=3,
-        default=(3, 2, 1),
-        help="Zero-based band indices used to build the RGB composite (default: Sentinel-2 B4/B3/B2).",
-    )
-    parser.add_argument(
-        "--rescale-factor",
-        type=float,
-        default=1.0 / 255.0,
-        help="Scalar applied to RGB tensor when z-score is not used.",
-    )
-    parser.add_argument("--apply-rgb-zscore", action="store_true", help="Use μ/σ from dataset info.")
-    parser.add_argument(
-        "--student-pretrained",
-        action="store_true",
-        help="Initialise the student from ImageNet pretrained weights.",
-    )
-    parser.add_argument(
-        "--use-sar-despeckle",
-        action="store_true",
-        help="Enable SAR despeckling in DatasetReading (mirrors ensemble training).",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="auto",
-        choices=["auto", "cpu", "cuda", "mps"],
-        help="Computation device preference (default: auto).",
-    )
-    return parser.parse_args()
+    latest_path = output_dir / "student_resnet18_last.pth"
+    torch.save(student.state_dict(), latest_path)
+    print(f"[INFO] Training complete. Checkpoints saved to {output_dir}")
+    print(f"[INFO] Best checkpoint → {best_path}")
+    print(f"[INFO] Latest checkpoint → {latest_path}")
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    train(args)
+    os.environ.setdefault("ACCELERATE_DISABLE_READONLY", "YES")
+    os.environ.setdefault("NPY_DISABLE_MAC_OSX_ACCELERATE", "1")
+    distill_student()

@@ -1,6 +1,8 @@
 import os
 import time
 import h5py
+import hashlib
+import pickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset, get_worker_info
@@ -24,8 +26,29 @@ def apply_paper_scaling(x: np.ndarray, modality: str) -> np.ndarray:
     return x
 
 
-def compute_band_stats(table: pd.DataFrame):
-    """Compute per-channel mean/std after paper scaling (TRAIN only)."""
+def compute_band_stats(table: pd.DataFrame, cache_dir="../../data/lcz42/.cache"):
+    """Compute per-channel mean/std after paper scaling (TRAIN only) with caching."""
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Create unique hash from table paths and modalities
+    table_signature = '|'.join(sorted(
+        f"{row.Path}:{row.Modality}:{row.Index}"
+        for row in table.itertuples()
+    ))
+    table_hash = hashlib.md5(table_signature.encode()).hexdigest()[:16]
+    cache_file = os.path.join(cache_dir, f"stats_{table_hash}.pkl")
+
+    # Try to load from cache
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                mu, sigma, C = pickle.load(f)
+            print(f"  -> Loaded cached stats: {C} channels (hash: {table_hash})")
+            return mu, sigma, C
+        except Exception as e:
+            print(f"[WARN] Cache load failed ({e}), recomputing...")
+
+    # Compute stats (original code)
     acc_mu, acc_sq, n_pix, C = None, None, 0, None
     base_dir = os.getcwd()
     for i, row in tqdm(enumerate(table.itertuples()), total=len(table), desc="Computing μ/σ"):
@@ -46,6 +69,15 @@ def compute_band_stats(table: pd.DataFrame):
         n_pix += x.shape[0]
     mu = acc_mu / n_pix
     sigma = np.sqrt(np.maximum(acc_sq / n_pix - mu ** 2, 1e-12))
+
+    # Save to cache
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump((mu.astype(np.float32), sigma.astype(np.float32), C), f)
+        print(f"  -> Stats cached (hash: {table_hash})")
+    except Exception as e:
+        print(f"[WARN] Cache save failed ({e}), continuing without cache")
+
     return mu.astype(np.float32), sigma.astype(np.float32), C
 
 
@@ -167,7 +199,13 @@ class So2SatDataset(Dataset):
                     handle.close()
                 except Exception:
                     pass
-            handle = h5py.File(path, "r")
+            # Open with SWMR (Single Writer Multiple Reader) mode for NFS safety
+            # and disable file locking to prevent conflicts on shared filesystems
+            try:
+                handle = h5py.File(path, "r", swmr=True, locking=False)
+            except (OSError, TypeError):
+                # Fallback if SWMR/locking not supported
+                handle = h5py.File(path, "r")
             worker_cache[path] = handle
         return worker_id, handle
 

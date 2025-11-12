@@ -43,7 +43,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--num-workers", type=int, default=12)
     parser.add_argument("--rgb-indices", type=int, nargs=3, default=(3, 2, 1))
-    parser.add_argument("--apply-rgb-zscore", action="store_true")
     parser.add_argument(
         "--device",
         type=str,
@@ -82,14 +81,9 @@ def main() -> None:
         )
     )
 
-    rgb_mu = torch.tensor(info["mu"], dtype=torch.float32)[list(args.rgb_indices)]
-    rgb_sigma = torch.tensor(info["sigma"], dtype=torch.float32)[list(args.rgb_indices)]
     val_dataset = KDPairedDataset(
         ds_val,
         args.rgb_indices,
-        rgb_mu=rgb_mu if args.apply_rgb_zscore else None,
-        rgb_sigma=rgb_sigma if args.apply_rgb_zscore else None,
-        rescale_factor=1.0 / 255.0,
     )
 
     val_loader = DataLoader(
@@ -116,7 +110,7 @@ def main() -> None:
             total += labels.size(0)
 
     acc = correct / max(total, 1)
-    print(f"[RESULT] Validation accuracy: {acc:.4%} ({correct}/{total})")
+    print(f"[RESULT] Test accuracy: {acc:.4%} ({correct}/{total})")
 
 
 if __name__ == "__main__":

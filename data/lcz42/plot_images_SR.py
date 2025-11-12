@@ -1,6 +1,11 @@
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
+
+argparser = argparse.ArgumentParser()
+argparser.add_argument('--index', type=int, default=18, help='Index of the patch to process')
+args = argparser.parse_args()
 
 DATASETS = [
     "testing.h5",
@@ -14,7 +19,7 @@ DATASETS = [
     "testing_vdsr3x.h5",
 ]
 
-PATCH_INDEX = 4 # 638
+PATCH_INDEX = args.index
 
 
 def preprocess(patch):
@@ -39,7 +44,7 @@ axes = axes.flatten()
 for ax, (img, title) in zip(axes, images):
     ax.imshow(img)
     ax.axis("off")
-    ax.set_title(title, fontsize=8)
+    ax.set_title(title.replace("testing_", "").replace(".h5", ""), fontsize=8)
 
 for ax in axes[len(images) :]:
     ax.axis("off")

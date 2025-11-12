@@ -7,6 +7,7 @@ import torch
 from sklearn.metrics import confusion_matrix
 from torch import nn, optim
 from torch.utils.data import Dataset, DataLoader
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 
 from fusion_densenet201 import TDAFusionDenseNet201
@@ -171,6 +172,8 @@ def train_fusion_member(cfg: Dict):
         shuffle=True,
         num_workers=cfg["numWorkers"],
         pin_memory=use_cuda,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
     test_loader = DataLoader(
         test_dataset,
@@ -178,12 +181,23 @@ def train_fusion_member(cfg: Dict):
         shuffle=False,
         num_workers=cfg["numWorkers"],
         pin_memory=use_cuda,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
 
     input_dim = tda_train.shape[1]
     num_classes = cfg["info"]["numClasses"]
 
     model = TDAFusionDenseNet201(tda_input_dim=input_dim, num_classes=num_classes).to(device)
+
+    # Compile model if enabled and PyTorch 2.0+
+    use_compile = cfg.get("useTorchCompile", False)
+    if use_compile and hasattr(torch, 'compile') and torch.__version__ >= '2.0':
+        try:
+            model = torch.compile(model, mode='reduce-overhead')
+            print(f"[{mode}] Model compiled with torch.compile")
+        except Exception as e:
+            print(f"[WARN] torch.compile failed ({e}), continuing without compilation")
     class_weights = cfg["info"].get("classWeights")
     weight_tensor = None
     if class_weights is not None:
@@ -199,6 +213,12 @@ def train_fusion_member(cfg: Dict):
         weight_decay=weight_decay,
     )
 
+    # Mixed Precision Training (AMP)
+    use_amp = use_cuda
+    scaler = GradScaler() if use_amp else None
+    if use_amp:
+        print(f"[{mode}] Using Mixed Precision Training (AMP)")
+
     history = {"loss": [], "acc": []}
 
     for epoch in range(cfg["maxEpochs"]):
@@ -208,11 +228,26 @@ def train_fusion_member(cfg: Dict):
         for imgs, tda, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg['maxEpochs']}"):
             imgs, tda, labels = imgs.to(device), tda.to(device), labels.to(device)
             optimizer.zero_grad()
-            preds = model(imgs, tda)
-            loss = criterion(preds, labels)
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
+
+            if use_amp:
+                # Mixed Precision forward pass
+                with autocast():
+                    preds = model(imgs, tda)
+                    loss = criterion(preds, labels)
+
+                # Scaled backward pass
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # Standard FP32 training
+                preds = model(imgs, tda)
+                loss = criterion(preds, labels)
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                optimizer.step()
 
             total_loss += loss.item() * labels.size(0)
             correct += (preds.argmax(dim=1) == labels).sum().item()

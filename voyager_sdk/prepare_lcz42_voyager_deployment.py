@@ -1,5 +1,14 @@
 """
-Convert LCZ42 training/testing H5 files into Voyager-friendly folders.
+Convert LCZ42 training/testing H5 files into Voyager SDK-friendly PNG folders.
+
+DIFFERENCE from research eval_lcz42_png.py:
+- Research eval: PNGs contain raw reflectance [0, 65535] uint16
+  → preprocess_png() does: [0,1] → paper_scale → resize → z_score
+- Voyager SDK: PNGs contain paper-scaled values [0, 255] uint8
+  → Voyager SDK normalize does: (img - μ) / σ directly on [0, 255] values
+
+This script pre-applies paper scaling to PNGs so Voyager SDK's normalize
+step works correctly with the correct LCZ42 μ/σ values.
 """
 
 from __future__ import annotations
@@ -10,7 +19,6 @@ from pathlib import Path
 import cv2
 import h5py
 import numpy as np
-from PIL import Image
 
 # --------------------------------------------------------------------------------------
 # Configuration (hardcoded for reproducibility)
@@ -46,7 +54,12 @@ CLS_NAMES = [
     "17_Water",
 ]
 
+
 def apply_paper_scaling(img: np.ndarray) -> np.ndarray:
+    """Apply paper scaling formula: x / (2.8 / 255.0)
+
+    Transforms reflectances from [0, 2.8] → [0, 255] range.
+    """
     img = img.astype(np.float32)
     img = img / (2.8 / 255.0)
     return np.clip(img, 0.0, 255.0)
@@ -59,23 +72,28 @@ def load_split(h5_path: Path) -> tuple[np.ndarray, np.ndarray]:
     return sen2, labels
 
 
-def save_rgb(image: np.ndarray, dest: Path) -> None:
-    """Save as 16-bit PNG using OpenCV to preserve precision of raw reflectance values.
+def save_rgb_voyager(image: np.ndarray, dest: Path) -> None:
+    """Save as 8-bit PNG with paper scaling already applied.
 
     Input: raw reflectance values in [0, 1] range
-    Output: 16-bit PNG at ORIGINAL 32x32 resolution (no resize)
+    Output: 8-bit PNG at ORIGINAL 32x32 resolution (no resize)
 
-    NOTE: Raw values are scaled by 65535 to convert [0, 1] → [0, 65535].
-    Paper scaling will be applied during eval/inference in preprocess_png().
+    NOTE: Paper scaling is applied DURING save, so PNG values are [0, 255].
+    Voyager SDK's normalize step will work directly on these paper-scaled values
+    using the correct LCZ42 μ/σ.
     """
     img = np.clip(image, 0.0, 1.0)
-    # Scale float32 [0, 1] → uint16 [0, 65535] for lossless encoding
-    img_16bit = (img * 65535.0).astype(np.uint16)
+
+    # Apply paper scaling: [0, 1] → [0, 255] in float
+    img_scaled = apply_paper_scaling(img)
+
+    # Convert to uint8 for 8-bit PNG encoding
+    img_uint8 = img_scaled.astype(np.uint8)
 
     # Convert RGB to BGR for OpenCV
-    img_bgr = img_16bit[..., ::-1]
+    img_bgr = img_uint8[..., ::-1]
 
-    # Save as 16-bit PNG WITHOUT resizing (OpenCV natively supports uint16)
+    # Save as 8-bit PNG WITHOUT resizing (at original 32x32 resolution)
     cv2.imwrite(str(dest), img_bgr)
 
 
@@ -119,9 +137,8 @@ def export_repr(data: np.ndarray, assignments: dict[int, list[int]], dest_dir: P
     for cls, idx_list in assignments.items():
         for idx in idx_list:
             rgb = data[idx][..., RGB_IDX]
-            # DO NOT apply paper_scaling here - save RAW reflectance values
-            # paper_scaling will be applied during eval/inference in preprocess_png()
-            save_rgb(rgb, dest_dir / f"class{cls+1:02d}_{counter:05d}.png")
+            # Paper scaling is applied INSIDE save_rgb_voyager()
+            save_rgb_voyager(rgb, dest_dir / f"class{cls+1:02d}_{counter:05d}.png")
             counter += 1
 
 
@@ -131,9 +148,8 @@ def export_val(data: np.ndarray, assignments: dict[int, list[int]], dest_dir: Pa
         cls_dir.mkdir(parents=True, exist_ok=True)
         for idx in assignments[cls_idx]:
             rgb = data[idx][..., RGB_IDX]
-            # DO NOT apply paper_scaling here - save RAW reflectance values
-            # paper_scaling will be applied during eval/inference in preprocess_png()
-            save_rgb(rgb, cls_dir / f"{idx:06d}.png")
+            # Paper scaling is applied INSIDE save_rgb_voyager()
+            save_rgb_voyager(rgb, cls_dir / f"{idx:06d}.png")
 
 
 def write_labels_file(path: Path) -> None:
@@ -160,14 +176,18 @@ def main() -> None:
     val_assign = select_indices(test_labels, VAL_PER_CLASS, SEED + 1)
 
     print(f"[INFO] Exporting calibration images to {repr_dir}...")
+    print(f"[INFO] (Paper scaling applied during PNG encoding)")
     export_repr(train_data, repr_assign, repr_dir)
     print(f"[INFO] Exporting validation images to {val_dir}...")
+    print(f"[INFO] (Paper scaling applied during PNG encoding)")
     export_val(test_data, val_assign, val_dir)
     write_labels_file(output_root / "labels.txt")
 
     print(f"\n[DONE] Calibration images: {repr_dir}")
     print(f"[DONE] Validation images: {val_dir}")
     print(f"[DONE] Labels file: {output_root / 'labels.txt'}")
+    print(f"\n[INFO] PNG values are [0, 255] uint8 with paper scaling pre-applied")
+    print(f"[INFO] Ready for Voyager SDK deployment with correct LCZ42 μ/σ normalization")
 
 
 if __name__ == "__main__":

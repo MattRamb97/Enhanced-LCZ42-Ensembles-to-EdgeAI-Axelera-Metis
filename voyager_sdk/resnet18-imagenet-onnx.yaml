@@ -1,0 +1,48 @@
+axelera-model-format: 1.0.0
+name: resnet18-lcz42
+description: ResNet18 distilled on LCZ42 (custom weights)
+
+pipeline:
+  - classifications:
+      model_name: resnet18-lcz42
+      input:
+        type: image
+        color_format: RGB
+        imreader_backend: OpenCV
+      preprocess:
+        - resize:
+            size: 224
+            interpolation: nearest
+            half_pixel_centers: True
+        - torch-totensor:
+            scale: False
+        - normalize:
+            mean: 9.206, 9.952, 11.270
+            std: 6.044, 4.351, 3.605
+      postprocess:
+        - topk:
+            k: 5
+
+models:
+  resnet18-lcz42:
+    class: AxONNXModel
+    class_path: $AXELERA_FRAMEWORK/ax_models/base_onnx.py
+    weight_path: $AXELERA_FRAMEWORK/customers/mymodels/student_resnet18_rgb.onnx
+    task_category: Classification
+    input_tensor_layout: NCHW
+    input_tensor_shape: [1, 3, 224, 224]
+    input_color_format: RGB
+    dataset: lcz42
+    num_classes: 17
+    extra_kwargs:
+      max_compiler_cores: 4
+
+datasets:
+  lcz42:
+    class: TorchvisionDataAdapter
+    class_path: $AXELERA_FRAMEWORK/ax_datasets/torchvision.py
+    data_dir_name: LCZ42
+    labels_path: $AXELERA_FRAMEWORK/data/LCZ42/labels.txt
+    repr_imgs_dir_path: $AXELERA_FRAMEWORK/data/LCZ42/repr
+    val_data: val
+    repr_imgs_dataloader_color_format: RGB
