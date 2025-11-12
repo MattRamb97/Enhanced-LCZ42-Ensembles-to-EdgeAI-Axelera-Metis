@@ -58,6 +58,7 @@ nosetests.xml
 *.json
 *.txt
 *.png
+*.tex
 
 # === MATLAB Temp Files ===
 *.asv
