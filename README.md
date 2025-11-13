@@ -562,23 +562,6 @@ For more information, please refer to:
 
 ---
 
-## 🐛 Bug Reports & Feature Requests
-
-To report a bug or request new features, please use the [GitHub Issues](https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/issues) tool.
-
-**When reporting bugs**, please include:
-- Python/MATLAB version
-- GPU model and CUDA version (if applicable)
-- Full error traceback
-- Steps to reproduce the issue
-
-**When requesting features**, please specify:
-- The motivation for the feature
-- Expected behavior and use cases
-- Any related research papers or implementations
-
----
-
 ## 🔍 License
 
 **MIT License**
