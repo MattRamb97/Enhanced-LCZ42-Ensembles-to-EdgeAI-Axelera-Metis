@@ -647,7 +647,7 @@ If you use this repository, dataset, or methodology in your research, please cit
 **Matteo Rambaldi**
 MSc in Artificial Intelligence and Robotics, University of Padua
 📧 [matteo.rambaldi@studenti.unipd.it](mailto:matteo.rambaldi@studenti.unipd.it)
-🔗 [GitHub](https://github.com/matteorambaldi) • [LinkedIn](https://linkedin.com/in/matteorambaldi)
+🔗 [GitHub](https://github.com/MattRamb97) • [LinkedIn](https://www.linkedin.com/in/matteo-rambaldi-5a66a6107)
 
 **Supervision**:
 - **Prof. Loris Nanni** — Department of Information Engineering, University of Padua
