@@ -1,207 +1,357 @@
 # MATLAB Teacher Ensemble Training
-This folder contains all MATLAB utilities used to train, validate, and export the *teacher ensembles* used in the Enhanced LCZ42 pipeline for both DenseNet201 and ResNet18.
 
-## Pipeline Overview
+## Overview
 
-### EnableGPU.m
+This directory contains the complete MATLAB implementation for training **teacher ensembles** that serve as supervision signals for the Enhanced LCZ42 pipeline. Two architectures are supported:
 
-Utility to check and enable GPU usage. Automatically selects GPU if available.
+- **DenseNet-201 Ensembles** — Large capacity teachers (densenet201_ensembles/)
+- **ResNet-18 Ensembles** — Lightweight teachers (resnet18_ensembles/)
 
-###  h5_reader.m
+Both architectures support three ensemble variants for diverse supervision:
+- **RAND** — 3 random multispectral (MS) bands per member
+- **RANDRGB** — RGB-constrained ensemble (B4, B3, B2 + random MS bands)
+- **SAR** — MS+SAR fusion (2 MS bands + 1 SAR band per member)
 
-Returns a single patch from `/sen1` or `/sen2` as `[H W C]` single precision.
+---
 
-**Input:**
+## Shared Utilities
 
-- pth: Path to HDF5 file
-- index: Patch index (1-based integer)
-- modality: "MS" (Sentinel-2) or "SAR" (Sentinel-1)
-
-**Output:** 
-
-- X: Single patch as [32×32×C] array where C=10 for MS, C=8 for SAR
-
-Sentinel-2 Bands (10 channels): B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12\
-Sentinel-1 Bands (8 channels): VH imaginary, VV real, VV imaginary, VH Lee-filtered intensity, VV Lee-filtered intensity, Covariance off-diagonal real, Covariance off-diagonal imaginary
-
-**Usage:**
-
-```matlab
-X = h5_reader(".../training.h5", 12345, "MS");  % 32x32x10
-```
+All utilities shared across ensemble types are located in [resnet18_ensembles/](resnet18_ensembles/):
 
 ### make_tables_from_h5.m
 
-Creates index tables from HDF5 files for training and testing.
+Generates index lookup tables from HDF5 datasets for efficient on-demand data loading.
 
-**Important:** Validation set is ignored to prevent cross-domain contamination between training and test cities.
+**Input:**
+- Path to folder containing `training.h5` and `testing.h5`
 
-**Input:** Path to folder containing training.h5 and testing.h5
+**Output:**
+- `tables_MS.mat` — Contains `train_MS`, `test_MS` tables
+- `tables_SAR.mat` — Contains `train_SAR`, `test_SAR` tables
 
-**Output:** 
-- tables_MS.mat (train_MS, test_MS)
-- tables_SAR.mat (train_SAR, test_SAR)
+**Table Format:**
 
-| Column | Type | Description | Example |
-|--------|------|-------------|---------|
-| Path | string | Absolute path to source HDF5 file | `"/ext/.../training.h5"` |
-| Label | categorical | LCZ class label (1-17) | `categorical(5)` |
-| Index | double | Position in HDF5 array (1-based) | `12345` |
-| Modality | string | Sensor type | `"MS"` or `"SAR"` |
+| Column | Type | Description |
+|:-------|:-----|:------------|
+| Path | string | Absolute path to HDF5 file |
+| Label | categorical | LCZ class (1–17) |
+| Index | double | 1-based position in H5 array |
+| Modality | string | `"MS"` (Sentinel-2) or `"SAR"` (Sentinel-1) |
 
 **Usage (on cluster):**
 ```matlab
 make_tables_from_h5('/ext/rambaldima/3271064/lcz42');
 ```
 
+---
+
+### h5_reader.m
+
+Low-level utility to read individual patches from HDF5 files on-demand.
+
+**Input:**
+- `path`: HDF5 file path
+- `index`: 1-based position in dataset
+- `modality`: `"MS"` or `"SAR"`
+
+**Output:**
+- Single patch as `[32, 32, C]` single precision where:
+  - C = 10 for MS (Sentinel-2 bands B2–B12)
+  - C = 8 for SAR (Sentinel-1 VH/VV polarizations)
+
+**Usage:**
+```matlab
+X = h5_reader("data/lcz42/training.h5", 12345, "MS");  % [32, 32, 10]
+```
+
+---
+
 ### DatasetReading.m
 
-Builds PyTorch-style datastores from index tables with on-demand H5 reading and preprocessing.
+Builds PyTorch-style datastores from index tables with preprocessing pipeline.
 
 **Input:** Configuration struct with:
-- `trainTable`, `testTable`: Tables from make_tables_from_h5
-- `useZscore`: Apply z-score normalization (default: false)
-- `useSARdespeckle`: Apply despeckling to SAR (default: false)
-- `useAugmentation`: Random geometric augmentation on training (default: false)
-- `reader.customFcn`: Function handle to read H5 patches (e.g., @h5_reader)
+- `trainTable`, `testTable`: Tables from `make_tables_from_h5`
+- `useZscore`: Apply z-score normalization (bool, default: false)
+- `useSARdespeckle`: Apply Lee despeckling to SAR (bool, default: false)
+- `useAugmentation`: Random geometric augmentation on training (bool, default: false)
+- `reader.customFcn`: Function handle, typically `@(row) h5_reader(row.Path, row.Index, row.Modality)`
 
 **Output:**
 - `dsTrain`: Training datastore with augmentation
 - `dsTest`: Test datastore (no augmentation)
-- `info`: Struct with classes, normalization stats, metadata
+- `info`: Metadata struct with classes, normalization stats
 
 **Preprocessing Pipeline:**
-1. Paper-faithful scaling: MS [0,2.8]→[0,255], SAR clip+scale to [0,255]
-2. Optional SAR despeckling (Lee filter)
-3. Optional z-score normalization per channel
-4. Resize to network input size
-5. Random geometric augmentation (training only)
+1. **Scaling** — MS: [0, 2.8] → [0, 255]; SAR: clip + scale to [0, 255]
+2. **Despeckling** — Optional Lee filtering for SAR
+3. **Normalization** — Optional per-channel z-score
+4. **Resizing** — To network input dimensions (usually 224×224)
+5. **Augmentation** — Random geometric transforms (training only)
 
 **Usage:**
 ```matlab
 cfg.trainTable = train_MS;
 cfg.testTable = test_MS;
+cfg.useZscore = true;
+cfg.useAugmentation = true;
 cfg.reader.customFcn = @(row) h5_reader(row.Path, row.Index, row.Modality);
-[dsTr, dsTe, info] = DatasetReading(cfg);
+[dsTrain, dsTest, info] = DatasetReading(cfg);
 ```
+
+---
+
+### EnableGPU.m
+
+Detects and initializes GPU acceleration (if available).
+
+**Usage:**
+```matlab
+EnableGPU(1);  % Enable GPU with verbosity
+```
+
+---
+
+## DenseNet-201 Ensembles
+
+Located in [densenet201_ensembles/](densenet201_ensembles/). Uses pretrained DenseNet-201 from `densenet201_pretrained.mat`.
 
 ### train_teachers.m
 
-Main training orchestrator. Trains one or more teacher ensembles.
+Main orchestrator for DenseNet-201 ensemble training (unmodified architecture).
 
 **Usage:**
 ```matlab
-train_teachers('RAND')     % Train only multispectral random bands
-train_teachers('RANDRGB')  % Train only RGB-constrained
-train_teachers('SAR')      % Train only SAR
-train_teachers('ALL')      % Train all three (sequential)
+train_teachers('RAND')      % Train RAND ensemble
+train_teachers('RANDRGB')   % Train RANDRGB ensemble
+train_teachers('SAR')       % Train SAR ensemble
+train_teachers('ALL')       % Train all three (sequential)
 ```
-### Rand_DenseNet.m
 
-Trains a DenseNet-201 ensemble using 3 randomly selected multispectral (MS) bands per member.
+**Configuration:**
+- Epochs: 12
+- Batch size: 128
+- Learning rate: 1e-3
+- Z-score normalization: enabled
+- SAR despeckling: enabled
+- Augmentation: enabled
 
-**Input:** Struct `cfgT` with:
-- `dsTrain`, `dsTest`: Datastores from DatasetReading
-- `info`: Struct with `classes` and metadata
-- Optional: `numMembers`, `maxEpochs`, `miniBatchSize`, `learnRate`, `rngSeed`
+**Output:**
+- `resRand.mat` — RAND ensemble results
+- `resRandRGB.mat` — RANDRGB ensemble results
+- `resSAR.mat` — SAR ensemble results
 
-**Output:** Struct with:
-- `.members`, `.testTop1`, `.confusionMat`, `.yTrue`, `.yPred`, `.scoresAvg`
+---
+
+### train_teachers_v2.m
+
+Updated orchestrator with pretrained weights from `densenet201_pretrained.mat`.
+
+**Differences from v1:**
+- Loads network from `.mat` file instead of calling `densenet201('Weights','none')`
+- Supports fine-tuning of pretrained weights
+
+**Usage:** (same as v1)
+```matlab
+train_teachers_v2('ALL')
+```
+
+---
+
+### Rand_DenseNet.m / Rand_DenseNet_v2.m
+
+Train DenseNet-201 ensemble on **3 random MS bands** per member.
+
+**Configuration (Rand_DenseNet_v2.m):**
+- Members: 10
+- Epochs: 12
+- Batch size: 128
+- LR: 1e-3
+- RNG seed: 1337
 
 **Key Details:**
-- Uses `densenet201('Weights','none')` to avoid requiring pretrained support packages on cluster.
-- Each model is trained on a different random MS triplet.
-- Softmax scores are averaged over ensemble.
+- Each member independently selects 3 random MS bands
+- Outputs ensemble statistics: per-member accuracy, confusion matrix, average softmax scores
 
-### RandRGB_DenseNet.m
+**Output Fields:**
+```matlab
+res.members(m).net        % Trained network
+res.members(m).bands      % Selected band indices
+res.members(m).valAcc     % Validation accuracy
+res.testTop1              % Ensemble test accuracy
+res.confusionMat          % Confusion matrix (17×17)
+res.scoresAvg             % Averaged softmax scores
+```
 
-Variant of Rand_DenseNet constrained to RGB (B4, B3, B2). Same pipeline and structure, just fixed bands.
+---
 
-### ensembleSARchannel_DenseNet.m
+### RandRGB_DenseNet.m / RandRGB_DenseNet_v2.m
 
-Trains DenseNet-201 ensemble on 3 SAR channel combinations.
+Train DenseNet-201 ensemble on **RGB-constrained bands** (B4, B3, B2) + optional random augmentation.
 
-**Input:** Struct `cfgT` (same format)
+**Differences from Rand:**
+- Fixed RGB bands (B4, B3, B2) instead of random selection
+- Better interpretability for visualization
 
-**Output:** Struct with ensemble results
+---
 
-**Implementation:**
-- Randomly selects 3 bands from SAR
+### ensembleSARchannel_DenseNet.m / ensembleSARchannel_DenseNet_v2.m
 
-### train_teachers_v2.m / train_teacher_ResNet18.m
+Train DenseNet-201 ensemble on **3 random SAR bands** per member.
 
-Main training orchestrator for training all ensembles using the updated _v2 models or ResNet18 models.
+**Key Details:**
+- Selects 3 bands from 8 available SAR channels
+- Applies despeckling during preprocessing
+
+---
+
+## ResNet-18 Ensembles
+
+Located in [resnet18_ensembles/](resnet18_ensembles/). Lightweight architecture for edge deployment, loaded from `resnet18_pretrained.mat`.
+
+### train_teacher_ResNet18.m
+
+Main orchestrator for ResNet-18 ensemble training.
 
 **Usage:**
 ```matlab
-train_teachers_v2('RAND')     % Train only multispectral random bands
-train_teachers_v2('RANDRGB')  % Train only RGB-constrained
-train_teachers_v2('SAR')      % Train MS+SAR (2+1) ensemble only
-train_teachers_v2('ALL')      % Train all three (sequential)
-
-or 
-
-train_teacher_ResNet18('RAND')     % Train only multispectral random bands
-train_teacher_ResNet18('RANDRGB')  % Train only RGB-constrained
-train_teacher_ResNet18('SAR')      % Train MS+SAR (2+1) ensemble only
-train_teacher_ResNet18('ALL')      % Train all three (sequential)
+train_teacher_ResNet18('RAND')      % Train RAND ensemble
+train_teacher_ResNet18('RANDRGB')   % Train RANDRGB ensemble
+train_teacher_ResNet18('SAR')       % Train SAR ensemble
+train_teacher_ResNet18('ALL')       % Train all three (default)
 ```
-### Rand_DenseNet_v2.m / Rand_ResNet18.m
 
-Updated version of `Rand_DenseNet.m` that supports **pretrained DenseNet-201** and **pretrained ResNet18** loaded from `.mat` files. Use when `densenet201_pretrained.mat` or `resnet18_pretrained.mat` is available and pretrained weights are desired.
+**Configuration:**
+- Epochs: 10
+- Batch size: 512 (larger for smaller model)
+- Learning rate: 1e-3
+- Z-score normalization: enabled
+- SAR despeckling: enabled
+- Augmentation: enabled
 
-**Differences from `Rand_DenseNet.m`:**
-- Loads the network from `densenet201_pretrained.mat` or  `resnet18_pretrained.mat` instead of calling `densenet201('Weights','none')`
-- Everything else remains unchanged: each model uses a different random MS triplet.
+**Output:**
+- `resRand_resnet18.mat` — RAND ensemble results
+- `resRandRGB_resnet18.mat` — RANDRGB ensemble results
+- `resSAR_resnet18.mat` — SAR ensemble results
 
-**Required:** 
- 
-`.mat` file `matlab/densenet201_pretrained.mat` or `resnet18_pretrained.mat`
+---
 
-### RandRGB_DenseNet_v2.m / RandRGB_ResNet18.m
+### Rand_ResNet18.m
 
-Updated RGB-constrained ensemble with pretrained DenseNet-201 or ResNet18. Functionally identical to RandRGB_DenseNet.m, but uses pretrained weights.
+Train ResNet-18 ensemble on **3 random MS bands** per member.
 
-### ensembleSARchannel_DenseNet_v2.m / randSAR_ResNet18.m
+**Configuration:**
+- Members: 10
+- Epochs: 10
+- Batch size: 512
+- LR: 1e-3
+- RNG seed: 1337
 
-Trains DenseNet-201 or ResNet18 ensemble on 2 MS + 1 SAR channel combinations.
+**Lightweight advantages:**
+- 12M parameters vs. 60M for DenseNet-201
+- Suitable for edge inference on Axelera Metis
+- Faster training and inference
 
-**Input:** Struct `cfgT` (same format)
+---
 
-**Output:** Struct with ensemble results
+### RandRGB_ResNet18.m
 
-**Implementation:**
-- Randomly selects 2 bands from MS and 1 from SAR
-- Concatenates into a 3-channel input
+Train ResNet-18 ensemble on **RGB-constrained bands** (B4, B3, B2).
 
-### Summary
+**Same structure as Rand_ResNet18 with fixed RGB band selection.**
 
-This MATLAB pipeline provides the teacher ensembles that serve as supervision for:
-1. **Super-resolution** (`super_resolution/`).
-2. **TDA** (`tda/`).
-2. **Knowledge distillation** (`distillation/`).
+---
+
+### randSAR_ResNet18.m
+
+Train ResNet-18 ensemble on **MS+SAR fusion** (2 MS + 1 SAR band per member).
+
+**Key Details:**
+- Concatenates 2 random MS bands + 1 random SAR band into 3-channel input
+- Exploits ResNet-18's 3-channel architecture design
+
+---
+
+## Ensemble Architecture Comparison
+
+| Aspect | DenseNet-201 | ResNet-18 |
+|:-------|:------------|:----------|
+| **Parameters** | 60M | 12M |
+| **Epochs** | 12 | 10 |
+| **Batch size** | 128 | 512 |
+| **Use case** | High-accuracy teachers | Edge deployment |
+| **Training time** | ~4-5 days | ~2-3 days |
+
+---
+
+## Complete Training Workflow
+
+**Step 1: Prepare HDF5 tables**
+```matlab
+make_tables_from_h5('../../data/lcz42');
+```
+
+**Step 2: Train DenseNet-201 ensembles (recommended for high accuracy)**
+```matlab
+train_teachers_v2('ALL');  % Trains RAND, RANDRGB, SAR sequentially
+```
+
+**Step 3: (Alternative) Train ResNet-18 ensembles (for edge deployment)**
+```matlab
+train_teacher_ResNet18('ALL');
+```
+
+**Step 4: Verify outputs**
+```matlab
+load('matlab/resRand.mat');
+disp(resRand.testTop1);  % Ensemble accuracy
+disp(size(resRand.members));  % Number of members
+```
+
+---
+
+## Cluster Considerations
+
+**NFS I/O Optimization:**
+- `DatasetReading.m` uses on-demand HDF5 reading to minimize memory footprint
+- Large batch sizes (512) help amortize I/O overhead
+- Consider reducing NUM_WORKERS on NFS with many concurrent jobs
+
+**GPU Memory:**
+- DenseNet-201: ~6–8 GB for batch=128
+- ResNet-18: ~4–5 GB for batch=512
+- Adjust batch sizes if OOM errors occur
+
+---
 
 ## Citation
 
-If you use this repository or derived datasets in your research, please cite:
+If you use this MATLAB pipeline in your research, please cite:
 
 ```bibtex
 @mastersthesis{rambaldi2025enhancedlcz42,
-  title        = {Enhanced LCZ42 Ensembles to Edge AI: Knowledge Distillation and Deployment on Axelera Metis},
-  author       = {Rambaldi, Matteo},
-  school       = {University of Padua},
-  year         = {2025},
-  note         = {GitHub Repository: https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis}
+  title={Enhanced LCZ42 Ensembles to Edge AI: Knowledge Distillation and Deployment on Axelera Metis},
+  author={Rambaldi, Matteo},
+  school={University of Padua},
+  year={2025},
+  note={GitHub Repository: https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis}
 }
 ```
 
+---
+
 ## License
 
-This project is released under the MIT License.
-See the LICENSE file for details.
+This project is released under the MIT License. See the LICENSE file for details.
 
-## Author & Supervision
+---
 
-Matteo Rambaldi — MSc Artificial Intelligence, University of Padua\
-Supervised by Prof. Loris Nanni\
-Co-Supervisor: Eng. Cristian Garjitzky
+## Author & Attribution
+
+**Project:** Matteo Rambaldi
+
+**Affiliation:** MSc Artificial Intelligence, University of Padua
+
+**Supervision:** Prof. Loris Nanni
+
+**Co-Supervision:** Eng. Cristian Garjitzky

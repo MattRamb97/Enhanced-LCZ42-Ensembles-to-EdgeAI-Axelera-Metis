@@ -42,7 +42,7 @@ DATA_ROOT = REPO_ROOT / "data" / "lcz42"
 TEACHER_CHECKPOINT = (
     REPO_ROOT / "resnet18_ensembles" / "models" / "trained" / "Rand_resnet18.pth"
 )
-OUTPUT_DIR = Path(__file__).resolve().parent / "checkpoints"
+OUTPUT_DIR = Path(__file__).resolve().parent / "checkpoints" / "resnet18_to_resnet18"
 RGB_INDICES = (2, 1, 0)  # Sentinel-2 B4/B3/B2 in zero-based Python indexing
 
 

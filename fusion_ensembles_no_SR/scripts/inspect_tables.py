@@ -49,29 +49,20 @@ def check_h5(path):
 
 
 def main():
-    ms_path = os.path.join(DATA_DIR, "tables_MS.mat")
-    sar_path = os.path.join(DATA_DIR, "tables_SAR.mat")
+    for suffix in ["_vdsr2x", "_edsr2x", "_edsr4x", "_esrgan2x", "_swinir2x", "_vdsr3x", "_bsrnet2x", "_realesrgan4x"]:
+        ms_path = os.path.join(DATA_DIR, f"tables_MS{suffix}.mat")
+        if not os.path.exists(ms_path):
+            continue
+        train_MS, test_MS = load_table(ms_path, f"train_MS{suffix}", f"test_MS{suffix}")
+        inspect_table(train_MS, f"TRAIN_MS{suffix}")
+        inspect_table(test_MS, f"TEST_MS{suffix}")
 
-    if not os.path.exists(ms_path) or not os.path.exists(sar_path):
-        print("Missing .mat tables. Run make_tables_from_h5.py first.")
-        return
+        # Inspect the linked .h5 files
+        print("\nChecking referenced HDF5 file structure:")
+        example_path = train_MS["Path"].iloc[0]
+        check_h5(example_path)
 
-    # Load tables
-    train_MS, test_MS = load_table(ms_path, "train_MS", "test_MS")
-    train_SAR, test_SAR = load_table(sar_path, "train_SAR", "test_SAR")
-
-    # Print stats
-    inspect_table(train_MS, "TRAIN_MS")
-    inspect_table(test_MS, "TEST_MS")
-    inspect_table(train_SAR, "TRAIN_SAR")
-    inspect_table(test_SAR, "TEST_SAR")
-
-    # Inspect the linked .h5 files
-    print("\nChecking referenced HDF5 file structure:")
-    example_path = train_MS["Path"].iloc[0]
-    check_h5(example_path)
-
-    print("\nTable inspection complete.")
+        print("\nTable inspection complete.")
 
 
 if __name__ == "__main__":

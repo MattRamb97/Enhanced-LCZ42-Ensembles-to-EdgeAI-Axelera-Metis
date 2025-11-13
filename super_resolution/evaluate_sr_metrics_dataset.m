@@ -1,4 +1,4 @@
-function metrics = evaluate_sr_metrics_dataset_parallel(h5_orig, h5_sr, num_samples)
+function metrics = evaluate_sr_metrics_dataset(h5_orig, h5_sr, num_samples)
     % Parallel optimized evaluation for M4 Pro
     % modality: "MS" for /sen2 only
     % num_samples: optional, set to limit samples (e.g., for testing)

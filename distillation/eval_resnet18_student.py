@@ -1,10 +1,11 @@
 """
-Quick evaluation of a distilled ResNet18 student on the LCZ42 validation split.
+Evaluation of the distilled ResNet18 student on the LCZ42 validation split.
 Reuses the same dataset utilities defined for training to ensure identical preprocessing.
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import torch
@@ -26,7 +27,7 @@ from distill_resnet18_student import (  # type: ignore
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESNET_SCRIPTS = REPO_ROOT / "resnet18_ensembles" / "scripts"
 DATA_ROOT = REPO_ROOT / "data" / "lcz42"
-CHECKPOINT_PATH = Path(__file__).resolve().parent / "checkpoints" / "student_resnet18_last.pth"
+CHECKPOINT_PATH = Path(__file__).resolve().parent / "checkpoints" / "resnet18_to_resnet18" / "student_resnet18_last.pth"
 
 RGB_INDICES = (2, 1, 0)  # Sentinel-2 B4/B3/B2 (R/G/B)
 BATCH_SIZE = 512
@@ -42,7 +43,14 @@ def build_student(num_classes: int, checkpoint_path: Path) -> nn.Module:
     return model
 
 
-def main() -> None:
+def main(checkpoint_path: Path | None = None) -> None:
+    """Evaluate student model on test set.
+
+    Args:
+        checkpoint_path: Path to checkpoint. If None, uses default CHECKPOINT_PATH.
+    """
+    if checkpoint_path is None:
+        checkpoint_path = CHECKPOINT_PATH
     table_path = DATA_ROOT / "tables_MS.mat"
     train_table, test_table = load_table_mat(table_path, "train_MS", "test_MS")
     train_table = _resolve_table_paths(train_table, RESNET_SCRIPTS)
@@ -77,10 +85,10 @@ def main() -> None:
 
     device = _select_device(DEVICE)
     print(f"[INFO] Using device: {device}")
-    print(f"[INFO] Checkpoint: {CHECKPOINT_PATH}")
+    print(f"[INFO] Checkpoint: {checkpoint_path}")
     print(f"[INFO] RGB indices: {RGB_INDICES}")
 
-    model = build_student(info["numClasses"], CHECKPOINT_PATH).to(device)
+    model = build_student(info["numClasses"], checkpoint_path).to(device)
     model.eval()
 
     correct = 0
@@ -99,4 +107,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Evaluate distilled ResNet18 student on LCZ42 test set"
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=CHECKPOINT_PATH,
+        help="Path to student checkpoint (default: resnet18_to_resnet18/student_resnet18_last.pth)",
+    )
+    args = parser.parse_args()
+    main(checkpoint_path=args.checkpoint)

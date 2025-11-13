@@ -619,7 +619,8 @@ If you use this repository, dataset, or methodology in your research, please cit
   number       = {6},
   pages        = {975--979},
   year         = {2019},
-  publisher    = {IEEE}
+  publisher    = {IEEE},
+  doi={10.1109/MGRS.2020.2964708},
 }
 ```
 
