@@ -11,8 +11,6 @@
 
 *MSc Thesis — University of Padua, Department of Information Engineering*
 
-[Report Bug](https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/issues/new?title=Bug%20Report%3A%20&labels=bug) • [Request Feature](https://github.com/matteorambaldi/Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/issues/new?title=Feature%20Request%3A%20&labels=enhancement)
-
 </div>
 
 ---
