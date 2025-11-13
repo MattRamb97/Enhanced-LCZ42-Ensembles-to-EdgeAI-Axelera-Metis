@@ -55,19 +55,33 @@ The core challenge in bringing deep learning models to edge devices lies in the 
 ```
 
 ```
-┌──────────────────┐      ┌──────────────────┐
-│  LCZ42 Dataset   │─────▶│ Teacher Training │
-│  (Sentinel-1/2)  │      │(Ens. DenseNet201)│
-│  352K patches    │      │ -- % accuracy    │
-└──────────────────┘      └──────────────────┘
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+│  LCZ42 Dataset   │─────▶│ Teacher Training │─────▶│ Knowledge        │
+│  (Sentinel-1/2)  │      │(Ens. DenseNet201)│      │ Distillation     │
+│  352K patches    │      │ -- % accuracy    │      │ (T=3.0, α=0.7)   │
+└──────────────────┘      └──────────────────┘      └──────────────────┘
+                                                              │
+                                                              ▼
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+│  Edge Inference  │◀─────│ ONNX Export      │◀─────│ RGB Student      │
+│  (Axelera Metis) │      │ (Opset 17)       │      │ 68.5% accuracy   │
+│  Real-time       │      │ INT8 Quantized   │      │ 10× smaller      │
+└──────────────────┘      └──────────────────┘      └──────────────────┘
 ```
 
 ```
-┌──────────────────┐      ┌──────────────────┐
-│  LCZ42 Dataset   │─────▶│  Teacher Fusion  │
-│  (Sentinel-1/2)  │      │    (SR + TDA)    │
-│  352K patches    │      │ -- % accuracy    │
-└──────────────────┘      └──────────────────┘
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+│  LCZ42 Dataset   │─────▶│   18000 / 14000  │─────▶│     8 Super      │
+│  (Sentinel-1/2)  │      |   TDA Features   |      │  Resolution Enh. |
+│  352K patches    │      │                  │      │                  │
+└──────────────────┘      └──────────────────┘      └──────────────────┘
+                                                              │
+                                                              ▼
+                                                    ┌──────────────────┐ 
+                                                    │  Teacher Fusion  │
+                                                    │    (SR + TDA)    │
+                                                    │  -- % accuracy   │
+                                                    └──────────────────┘
 
 ```
 
