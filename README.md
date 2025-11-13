@@ -72,7 +72,7 @@ The core challenge in bringing deep learning models to edge devices lies in the 
 ```
 ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
 │  LCZ42 Dataset   │─────▶│   18000 / 14000  │─────▶│     8 Super      │
-│  (Sentinel-1/2)  │      |   TDA Features   |      │  Resolution Enh. |
+│  (Sentinel-1/2)  │      │   TDA Features   │      │  Resolution Enh. │
 │  352K patches    │      │                  │      │                  │
 └──────────────────┘      └──────────────────┘      └──────────────────┘
                                                               │
