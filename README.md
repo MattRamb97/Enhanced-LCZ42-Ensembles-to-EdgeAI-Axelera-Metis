@@ -1,3 +1,5 @@
+<div align="center">
+
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.3%2B-orange.svg)](https://pytorch.org/)
 [![MATLAB](https://img.shields.io/badge/MATLAB-R2023b%2B-red.svg)](https://www.mathworks.com/)
@@ -5,7 +7,7 @@
 
 # Enhanced LCZ42 Ensembles to Edge AI
 
-<div align="center">
+
 
 **Knowledge Distillation and Deployment on Axelera Metis AI Accelerator**
 
