@@ -1,16 +1,11 @@
 """
 Evaluate the distilled ResNet18 student on the Voyager PNG dataset (LCZ42).
 
-IMPORTANT: voyager_sdk/data/LCZ42 contains 32x32 PNG images that are ALREADY paper-scaled [0, 255].
-Pipeline:
-1. Load 32x32 uint8 PNG (paper-scaled values [0, 255])
-2. Resize to 224x224 (required by ResNet18 input)
-3. Apply z-score normalization (μ/σ computed from training dataset)
-4. Evaluate model
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import cv2
@@ -26,7 +21,7 @@ from tqdm import tqdm
 # --------------------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 VAL_ROOT = BASE_DIR / "data" / "LCZ42" / "val"
-CHECKPOINT_PATH = BASE_DIR.parent / "distillation" / "checkpoints" / "densenet201_to_resnet18" / "checkpoints" / "student_resnet18_from_densenet201_last.pth"
+CHECKPOINT_PATH = BASE_DIR.parent / "distillation" / "checkpoints" / "densenet201_to_resnet18" / "student_resnet18_from_densenet201_last.pth"
 
 # μ/σ from DenseNet201→ResNet18 distillation training on RGB channels
 # After paper scaling on 224x224 resized data
@@ -43,10 +38,10 @@ NUM_CLASSES = 17
 def preprocess_png(path: str) -> torch.Tensor:
     """Load 32x32 paper-scaled PNG and prepare for ResNet18.
 
-    Pipeline:
+    Pipeline (matching dataset_reading.py behavior):
     1. Load 32x32 uint8 PNG (already paper-scaled [0, 255])
-    2. Resize to 224x224 (required by ResNet18)
-    3. Apply z-score normalization with pre-computed μ/σ
+    2. Apply z-score normalization with pre-computed μ/σ (on 32x32)
+    3. Resize to 224x224 (required by ResNet18 input)
     """
     img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if img is None:
@@ -54,14 +49,14 @@ def preprocess_png(path: str) -> torch.Tensor:
 
     # Convert BGR → RGB
     img = img[:, :, ::-1]
-    img = img.astype(np.float32)
+    img = img.astype(np.float32)  # 32x32, [0, 255]
 
-    # Resize from 32x32 to 224x224 (BEFORE z-score normalization)
-    # μ/σ are computed on 224x224 resized data
+    # Apply z-score normalization BEFORE resize (matching training pipeline)
+    # μ/σ computed on 224x224 but applied to 32x32 (same as dataset_reading.py)
+    img = (img - MU.numpy()[None, None, :]) / (SIGMA.numpy()[None, None, :] + 1e-6)
+
+    # Resize from 32x32 to 224x224 AFTER z-score
     img_resized = cv2.resize(img, (224, 224), interpolation=cv2.INTER_NEAREST)
-
-    # Apply z-score normalization with pre-computed μ/σ
-    img_resized = (img_resized - MU.numpy()[None, None, :]) / (SIGMA.numpy()[None, None, :] + 1e-6)
 
     # Convert (H, W, C) → (C, H, W) for PyTorch
     img_tensor = torch.from_numpy(img_resized.transpose(2, 0, 1)).float()
@@ -110,19 +105,22 @@ def select_device(request: str) -> torch.device:
     return torch.device(request)
 
 
-def main() -> None:
+def main(checkpoint_path: Path | None = None) -> None:
+    if checkpoint_path is None:
+        checkpoint_path = CHECKPOINT_PATH
+
     device = select_device(DEVICE)
     print(f"[INFO] Using device: {device}")
     print(f"[INFO] Validation root: {VAL_ROOT}")
-    print(f"[INFO] Checkpoint: {CHECKPOINT_PATH}")
+    print(f"[INFO] Checkpoint: {checkpoint_path}")
     print(f"[INFO] μ (RGB): {MU.tolist()}")
     print(f"[INFO] σ (RGB): {SIGMA.tolist()}")
 
-    if not CHECKPOINT_PATH.exists():
-        print(f"[ERROR] Checkpoint not found: {CHECKPOINT_PATH}")
+    if not checkpoint_path.exists():
+        print(f"[ERROR] Checkpoint not found: {checkpoint_path}")
         return
 
-    model = build_model(CHECKPOINT_PATH, device)
+    model = build_model(checkpoint_path, device)
     dataset = PNGDataset(str(VAL_ROOT))
     dataloader = DataLoader(
         dataset,
@@ -147,4 +145,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Evaluate distilled ResNet18 student on Voyager LCZ42 PNG dataset"
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=CHECKPOINT_PATH,
+        help="Path to student checkpoint (default: distillation/checkpoints/densenet201_to_resnet18/student_resnet18_from_densenet201_last.pth)",
+    )
+    args = parser.parse_args()
+    main(checkpoint_path=args.checkpoint)

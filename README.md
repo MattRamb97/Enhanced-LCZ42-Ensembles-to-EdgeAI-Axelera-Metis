@@ -148,7 +148,7 @@ A benchmark dataset for **Local Climate Zone (LCZ)** classification from Sentine
 ### ✅ **High-Accuracy Teacher Ensembles**
 - **DenseNet201** and **ResNet18** ensemble architectures with 10 members each
 - Three modality configurations: **RAND** (random MS bands), **RANDRGB** (MS + RGB fusion), **SAR** (MS+SAR fusion)
-- **Best result**: 71.2% Top-1 accuracy with RAND configuration
+- **Best result**: 72.82% Top-1 single accuracy with SAR configuration
 - Sum-rule ensemble fusion for robust predictions
 
 ### ✅ **Topological Data Analysis (TDA) Enhancement**
@@ -315,7 +315,7 @@ Each subdirectory contains its own `README.md` with detailed usage instructions.
 
 ### **Hardware Requirements**
 
-- **GPU**: NVIDIA RTX 3090 / A40
+- **GPU**: NVIDIA RTX 3090 / A40 recommended
 - **RAM**: 32GB+ recommended for large batch sizes
 - **Storage**: 500GB+ for full dataset and super-resolution variants
 
@@ -506,9 +506,9 @@ python prepare_lcz42_voyager_dataset.py  # create the final correct data/LCZ42 f
 | ResNet18 | 30 ALL | **73.22%** | 72.98% | 73.12% | 71.35% |
 | DenseNet201 | 10 RAND | 72.59% | 72.85% | 72.59% | 70.93% |
 | DenseNet201 | 10 RANDRGB | 72.21% | 72.04% | 72.21% | 70.25% |
-| DenseNet201 | 10 SAR | --% | --% | --% | --% |
-| DenseNet201 | 10 ALL | --% | --% | --% | --% |
-| DenseNet201+TDA | Fusion | -- | --% | --% | --% |
+| DenseNet201 | 10 SAR | 72.82% | 73.17% | 72.81% | 70.62% |
+| DenseNet201 | 30 ALL | **73.62%** | 73.87% | 73.51% | 71.32% |
+| Fusion | ALL | -- | --% | --% | --% |
 
 ### **Knowledge Distillation Results**
 
