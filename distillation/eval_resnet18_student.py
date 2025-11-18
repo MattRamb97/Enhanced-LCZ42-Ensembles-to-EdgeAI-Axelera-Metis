@@ -114,7 +114,7 @@ if __name__ == "__main__":
         "--checkpoint",
         type=Path,
         default=CHECKPOINT_PATH,
-        help="Path to student checkpoint (default: resnet18_to_resnet18/student_resnet18_last.pth)",
+        help="Path to student checkpoint (default: checkpoints/resnet18_to_resnet18/student_resnet18_last.pth)",
     )
     args = parser.parse_args()
     main(checkpoint_path=args.checkpoint)

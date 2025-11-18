@@ -1,11 +1,5 @@
 """
 Offline knowledge distillation: RAND ResNet18 ensemble (teacher) -> RGB ResNet18 student.
-
-It mirrors the MATLAB training pipeline:
-  1. load MATLAB tables (train/test) and resolve paths
-  2. build DatasetReading datasets with paper scaling + z-score
-  3. sample RGB bands (B4/B3/B2 → indices 2/1/0 in Python order)
-  4. distill the teacher ensemble logits into a single ResNet18 student
 """
 
 from __future__ import annotations
@@ -157,20 +151,22 @@ def build_teacher(checkpoint_path: Path) -> RandResNet18Teacher:
 
 
 # --------------------------------------------------------------------------------------
-# Dataset wrapper
+# Dataset wrapper - NOW STORES TEACHER LOGITS (cached in memory)
 # --------------------------------------------------------------------------------------
 class KDPairedDataset(Dataset):
     """
-    Returns both the full multispectral tensor (teacher) and the RGB subset (student).
+    Returns RGB subset (student) and PRECOMPUTED teacher logits.
     """
 
     def __init__(
         self,
         base_dataset: Dataset,
         rgb_indices: Iterable[int],
+        teacher_logits: torch.Tensor,  # PRECOMPUTED logits
     ) -> None:
         self.base = base_dataset
         self.rgb_idx = torch.tensor(list(rgb_indices), dtype=torch.long)
+        self.teacher_logits = teacher_logits  # Cache in memory
 
     def __len__(self) -> int:
         return len(self.base)
@@ -178,7 +174,7 @@ class KDPairedDataset(Dataset):
     def __getitem__(self, idx: int):
         full_tensor, label = self.base[idx]  # (C_full, H, W)
         rgb = torch.index_select(full_tensor, dim=0, index=self.rgb_idx)
-        return rgb, full_tensor, label
+        return rgb, self.teacher_logits[idx], label  # Return cached logits
 
 
 # --------------------------------------------------------------------------------------
@@ -234,12 +230,51 @@ class KDConfig:
     weight_decay: float = 1e-4
     epochs: int = 30
     batch_size: int = 512
-    num_workers: int = 8
+    num_workers: int = 4
     seed: int = 42
     rgb_indices: Tuple[int, int, int] = RGB_INDICES
     student_pretrained: bool = False
     use_sar_despeckle: bool = False
     device: str = "auto"
+
+
+# --------------------------------------------------------------------------------------
+# PRECOMPUTE teacher logits (ONE TIME ONLY)
+# --------------------------------------------------------------------------------------
+def precompute_teacher_logits(
+    teacher: nn.Module,
+    dataset: Dataset,
+    device: torch.device,
+    batch_size: int = 512,
+) -> torch.Tensor:
+    """
+    Compute teacher logits for entire dataset once.
+    Store in memory for fast epoch loops.
+    """
+    print("[INFO] Precomputing teacher logits for entire dataset...")
+
+    teacher.eval()
+    all_logits = []
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,  # IMPORTANT: keep order matching dataset indices
+        num_workers=4,
+        pin_memory=True,
+    )
+
+    with torch.no_grad():
+        for full_tensors, _ in tqdm(loader, desc="[Precompute teacher]"):
+            full_tensors = full_tensors.to(device, non_blocking=True)
+            logits = teacher(full_tensors, return_logits=True)  # (B, 17)
+            all_logits.append(logits.cpu())
+
+    # Concatenate all batches
+    teacher_logits = torch.cat(all_logits, dim=0)  # (N, 17)
+    print(f"[INFO] Precomputed logits shape: {teacher_logits.shape}")
+
+    return teacher_logits
 
 
 # --------------------------------------------------------------------------------------
@@ -273,7 +308,30 @@ def distill_student(cfg: KDConfig | None = None) -> None:
         )
     )
 
-    train_dataset = KDPairedDataset(ds_train, cfg.rgb_indices)
+    device = _select_device(cfg.device)
+
+    # ========== KEY OPTIMIZATION: PRECOMPUTE TEACHER LOGITS ==========
+    print("\n" + "="*80)
+    print("[PHASE 1] Loading teacher and precomputing logits (one-time cost)...")
+    print("="*80 + "\n")
+
+    teacher = build_teacher(teacher_ckpt).to(device).eval()
+    for p in teacher.parameters():
+        p.requires_grad = False
+
+    # PRECOMPUTE ALL teacher logits in advance
+    teacher_logits = precompute_teacher_logits(teacher, ds_train, device, batch_size=cfg.batch_size)
+
+    # Free teacher from GPU memory
+    del teacher
+    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+
+    print("\n" + "="*80)
+    print("[PHASE 2] Training student with cached teacher logits...")
+    print("="*80 + "\n")
+
+    # ========== NOW use cached logits dataset ==========
+    train_dataset = KDPairedDataset(ds_train, cfg.rgb_indices, teacher_logits)
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
@@ -281,11 +339,6 @@ def distill_student(cfg: KDConfig | None = None) -> None:
         num_workers=cfg.num_workers,
         pin_memory=True,
     )
-
-    device = _select_device(cfg.device)
-    teacher = build_teacher(teacher_ckpt).to(device).eval()
-    for p in teacher.parameters():
-        p.requires_grad = False
 
     student = resnet18(weights=ResNet18_Weights.DEFAULT if cfg.student_pretrained else None)
     student.fc = nn.Linear(student.fc.in_features, info["numClasses"])
@@ -300,6 +353,7 @@ def distill_student(cfg: KDConfig | None = None) -> None:
 
     print(f"[INFO] Using device: {device}")
     print(f"[INFO] Training samples: {len(train_dataset)}")
+    print(f"[INFO] Estimated speedup: ~14x (cached logits)")
 
     for epoch in range(1, cfg.epochs + 1):
         student.train()
@@ -307,18 +361,16 @@ def distill_student(cfg: KDConfig | None = None) -> None:
         hard_loss = 0.0
         soft_loss = 0.0
 
-        for rgb, full, labels in tqdm(train_loader, desc=f"[Epoch {epoch}/{cfg.epochs}]"):
+        for rgb, cached_logits, labels in tqdm(train_loader, desc=f"[Epoch {epoch}/{cfg.epochs}]"):
             rgb = rgb.to(device, non_blocking=True)
-            full = full.to(device, non_blocking=True)
+            cached_logits = cached_logits.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
-            with torch.no_grad():
-                teacher_logits = teacher(full, return_logits=True)
-
+            # Standard training (float32 - required for soft labels stability)
             student_logits = student(rgb)
             loss, loss_parts = distillation_loss(
                 student_logits,
-                teacher_logits,
+                cached_logits,
                 labels,
                 alpha=cfg.alpha,
                 temperature=3.0,
@@ -360,7 +412,17 @@ def distill_student(cfg: KDConfig | None = None) -> None:
 
     history_path = output_dir / "kd_history.json"
     with open(history_path, "w") as f:
-        json.dump(dict(history=history, best_loss=best_loss), f, indent=2)
+        json.dump(
+            dict(
+                history=history,
+                best_loss=best_loss,
+                mu=info["mu"].tolist(),
+                sigma=info["sigma"].tolist(),
+                numClasses=info["numClasses"],
+            ),
+            f,
+            indent=2,
+        )
 
     latest_path = output_dir / "student_resnet18_last.pth"
     torch.save(student.state_dict(), latest_path)

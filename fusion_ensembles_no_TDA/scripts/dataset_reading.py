@@ -1,0 +1,336 @@
+import os
+import time
+import h5py
+import hashlib
+import pickle
+import numpy as np
+import torch
+from torch.utils.data import Dataset, get_worker_info
+import cv2
+import random
+import pandas as pd
+from tqdm import tqdm
+
+# -----------------------------------------------------
+# Helper functions
+# -----------------------------------------------------
+
+def apply_paper_scaling(x: np.ndarray, modality: str) -> np.ndarray:
+    """Apply paper scaling identical to MATLAB's applyPaperScaling."""
+    x = x.astype(np.float32)
+    if modality.upper() == "SAR":
+        x = np.clip(x, -0.5, 0.5)
+        x = (x + 0.5) * 255.0
+    else:  # MS
+        x = x / (2.8 / 255.0)
+    return x
+
+
+def compute_band_stats(table: pd.DataFrame, cache_dir="../../data/lcz42/.cache"):
+    """Compute per-channel mean/std after paper scaling (TRAIN only) with caching."""
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Create unique hash from table paths and modalities
+    table_signature = '|'.join(sorted(
+        f"{row.Path}:{row.Modality}:{row.Index}"
+        for row in table.itertuples()
+    ))
+    table_hash = hashlib.md5(table_signature.encode()).hexdigest()[:16]
+    cache_file = os.path.join(cache_dir, f"stats_{table_hash}.pkl")
+
+    # Try to load from cache
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                mu, sigma, C = pickle.load(f)
+            print(f"  -> Loaded cached stats: {C} channels (hash: {table_hash})")
+            return mu, sigma, C
+        except Exception as e:
+            print(f"[WARN] Cache load failed ({e}), recomputing...")
+
+    # Compute stats (original code)
+    acc_mu, acc_sq, n_pix, C = None, None, 0, None
+    base_dir = os.getcwd()
+    for i, row in tqdm(enumerate(table.itertuples()), total=len(table), desc="Computing μ/σ"):
+        path = os.path.expanduser(str(row.Path))
+        if not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(base_dir, path))
+        with h5py.File(path, "r", swmr=True) as f:
+            dset = f["/sen1" if row.Modality.upper() == "SAR" else "/sen2"]
+            patch = dset[int(row.Index)]
+        X = apply_paper_scaling(patch, row.Modality)
+        C = X.shape[-1]
+        x = X.reshape(-1, C).astype(np.float64)
+        if acc_mu is None:
+            acc_mu = np.zeros(C, dtype=np.float64)
+            acc_sq = np.zeros(C, dtype=np.float64)
+        acc_mu += x.sum(axis=0)
+        acc_sq += (x ** 2).sum(axis=0)
+        n_pix += x.shape[0]
+    mu = acc_mu / n_pix
+    sigma = np.sqrt(np.maximum(acc_sq / n_pix - mu ** 2, 1e-12))
+
+    # Save to cache
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump((mu.astype(np.float32), sigma.astype(np.float32), C), f)
+        print(f"  -> Stats cached (hash: {table_hash})")
+    except Exception as e:
+        print(f"[WARN] Cache save failed ({e}), continuing without cache")
+
+    return mu.astype(np.float32), sigma.astype(np.float32), C
+
+
+# -----------------------------------------------------
+# Augmentation
+# -----------------------------------------------------
+
+def augment_aligned(img: np.ndarray) -> np.ndarray:
+    """Affine warp + reflection + light cutout, identical to MATLAB randomAffine2d."""
+    H, W, C = img.shape
+
+    # Random horizontal reflection (50% chance)
+    if random.random() < 0.5:
+        img = np.ascontiguousarray(np.flip(img, axis=1))
+
+    # Random affine (rotation ±8°, translation ±2px)
+    M = cv2.getRotationMatrix2D((W / 2, H / 2), random.uniform(-8, 8), 1.0)
+    M[0, 2] += random.uniform(-2, 2)
+    M[1, 2] += random.uniform(-2, 2)
+
+    warped = np.stack([
+        cv2.warpAffine(
+            img[:, :, c],
+            M, (W, H),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0
+        ) for c in range(C)
+    ], axis=-1)
+
+    # Light cutout (same as MATLAB)
+    if random.random() < 0.3:
+        k = random.randint(3, 5)
+        x = random.randint(0, max(0, W - k))
+        y = random.randint(0, max(0, H - k))
+        warped[y:y + k, x:x + k, :] = 0
+
+    return warped
+
+
+# -----------------------------------------------------
+# Dataset Class
+# -----------------------------------------------------
+
+class So2SatDataset(Dataset):
+    def __init__(
+        self,
+        table: pd.DataFrame,
+        resize_to=None,
+        use_zscore=False,
+        mu=None,
+        sigma=None,
+        use_sar_despeckle=False,
+        use_augmentation=False,
+        to_gpu=False,
+        random_seed=42,
+    ):
+        super().__init__()
+        self.table = table.reset_index(drop=True)
+        self.resize_to = resize_to
+        self.use_zscore = use_zscore
+        self.mu = mu
+        self.sigma = sigma
+        self.use_sar_despeckle = use_sar_despeckle
+        self.use_augmentation = use_augmentation
+        self.to_gpu = to_gpu
+        self._base_dir = os.getcwd()
+        self.table["Path"] = self.table["Path"].map(self._resolve_path)
+        self._file_handles = {}
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+
+    def __len__(self):
+        return len(self.table)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_file_handles"] = {}
+        return state
+
+    def __del__(self):
+        try:
+            self._cleanup_handles()
+        except Exception:
+            pass
+
+    def _resolve_path(self, path: str) -> str:
+        path = os.path.expanduser(str(path))
+        if not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(self._base_dir, path))
+        return path
+
+    def _cleanup_handles(self):
+        for worker_cache in self._file_handles.values():
+            for handle in worker_cache.values():
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+        self._file_handles.clear()
+
+    def _close_file_handle(self, worker_id, path):
+        worker_cache = self._file_handles.get(worker_id, {})
+        handle = worker_cache.pop(path, None)
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                pass
+
+    def _get_file_handle(self, path: str):
+        worker = get_worker_info()
+        worker_id = worker.id if worker is not None else "main"
+        worker_cache = self._file_handles.setdefault(worker_id, {})
+        handle = worker_cache.get(path)
+        if handle is None or not handle.id.valid:
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+            # Open with SWMR (Single Writer Multiple Reader) mode for NFS safety
+            # and disable file locking to prevent conflicts on shared filesystems
+            try:
+                handle = h5py.File(path, "r", swmr=True, locking=False)
+            except (OSError, TypeError):
+                # Fallback if SWMR/locking not supported
+                handle = h5py.File(path, "r")
+            worker_cache[path] = handle
+        return worker_id, handle
+
+    def _read_patch(self, path: str, dataset_key: str, index: int, retries: int = 3):
+        last_error = None
+        for attempt in range(retries):
+            worker_id, handle = self._get_file_handle(path)
+            try:
+                return handle[dataset_key][index]
+            except OSError as err:
+                last_error = err
+                self._close_file_handle(worker_id, path)
+                time.sleep(0.1 * (attempt + 1))
+        raise OSError(
+            f"Failed to read '{dataset_key}' at index {index} from {path} after {retries} attempts"
+        ) from last_error
+
+    def __getitem__(self, idx):
+        row = self.table.iloc[idx]
+        modality = row["Modality"].upper()
+        dataset_key = "/sen1" if modality == "SAR" else "/sen2"
+        X = self._read_patch(row["Path"], dataset_key, int(row["Index"]))
+
+        X = apply_paper_scaling(X, modality)
+
+        # Optional despeckle (SAR only)
+        if self.use_sar_despeckle and modality == "SAR":
+            for c in range(X.shape[2]):
+                X[:, :, c] = cv2.fastNlMeansDenoising(X[:, :, c].astype(np.uint8), None, 12, 7, 21)
+
+        # Optional z-score (after paper scaling)
+        if self.use_zscore and self.mu is not None and self.sigma is not None:
+            X = (X - self.mu) / (self.sigma + 1e-6)
+
+        # Augment
+        if self.use_augmentation:
+            X = augment_aligned(X)
+
+        if self.resize_to is not None:
+            target_w, target_h = self.resize_to
+            if (X.shape[1], X.shape[0]) != (target_w, target_h):
+                if target_w > X.shape[1] or target_h > X.shape[0]:
+                    interp = cv2.INTER_CUBIC
+                else:
+                    interp = cv2.INTER_AREA
+                X = cv2.resize(X, (target_w, target_h), interpolation=interp)
+
+        # To tensor (C,H,W), float32 in [0,1]
+        X = torch.tensor(X, dtype=torch.float32).permute(2, 0, 1)
+        if self.to_gpu and torch.cuda.is_available():
+            X = X.pin_memory().to("cuda", non_blocking=True)
+        label = int(row["Label"]) - 1  # 0-based
+
+        return X, label
+
+
+# -----------------------------------------------------
+# Top-level API (equivalent to DatasetReading.m)
+# -----------------------------------------------------
+
+def DatasetReading(cfg: dict):
+    """
+    Python equivalent of MATLAB DatasetReading.m
+    cfg keys:
+        trainTable, testTable  -> pandas DataFrames
+        resizeTo, useZscore, useSARdespeckle, useAugmentation
+        calibrationFrac, randomSeed
+    """
+    random_seed = cfg.get("randomSeed", 42)
+    torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
+    resize_to = cfg.get("resizeTo")
+    use_zscore = cfg.get("useZscore", False)
+    use_sar = cfg.get("useSARdespeckle", False)
+    use_aug = cfg.get("useAugmentation", False)
+
+    train_table = cfg["trainTable"]
+    test_table = cfg["testTable"]
+
+    print("[DatasetReading] Computing per-channel μ/σ on TRAIN…")
+    mu, sigma, C = compute_band_stats(train_table)
+    print(f"  -> Channels: {C} | μ/σ computed.")
+
+    dsTrain = So2SatDataset(
+        train_table,
+        resize_to=resize_to,
+        use_zscore=use_zscore,
+        mu=mu,
+        sigma=sigma,
+        use_sar_despeckle=use_sar,
+        use_augmentation=use_aug,
+        random_seed=random_seed,
+    )
+
+    dsTest = So2SatDataset(
+        test_table,
+        resize_to=resize_to,
+        use_zscore=use_zscore,
+        mu=mu,
+        sigma=sigma,
+        use_sar_despeckle=use_sar,
+        use_augmentation=False,
+        random_seed=random_seed,
+    )
+
+    labels_all = pd.concat([train_table["Label"], test_table["Label"]], axis=0).astype(int)
+    max_label = int(labels_all.max())
+    classes = list(range(1, max_label + 1))
+
+    train_counts_series = train_table["Label"].astype(int).value_counts().sort_index()
+    class_counts = np.zeros(max_label, dtype=np.int64)
+    class_counts[train_counts_series.index.to_numpy() - 1] = train_counts_series.to_numpy()
+    inv_freq = 1.0 / np.maximum(class_counts, 1)
+    class_weights = (inv_freq / inv_freq.sum()) * len(class_counts)
+
+    info = dict(
+        numClasses=max_label,
+        classes=classes,
+        classes_str=[str(c) for c in classes],
+        mu=mu,
+        sigma=sigma,
+        resizeTo=resize_to,
+        classCounts=class_counts,
+        classWeights=class_weights.astype(np.float32),
+    )
+
+    print(f"[DatasetReading] Done. TRAIN {len(dsTrain)} | TEST {len(dsTest)}.")
+    return dsTrain, dsTest, info

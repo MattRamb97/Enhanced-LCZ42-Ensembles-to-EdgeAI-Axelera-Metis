@@ -80,7 +80,7 @@ The core challenge in bringing deep learning models to edge devices lies in the 
                                                     ┌──────────────────┐ 
                                                     │  Teacher Fusion  │
                                                     │    (SR + TDA)    │
-                                                    │  -- % accuracy   │
+                                                    │  73.45% accuracy │
                                                     └──────────────────┘
 
 ```
@@ -264,25 +264,58 @@ Enhanced-LCZ42-Ensembles-to-EdgeAI-Axelera-Metis/
 │
 ├── distillation/                   # Knowledge distillation (Teacher → Student)
 │   ├── distill_resnet18_student.py      # ResNet18 teacher → ResNet18 RGB student
-│   ├── distill_densenet201_student.py   # DenseNet ensemble → student distillation
-│   ├── eval_resnet18_student.py         # Student evaluation on HDF5 test set
-│   ├── eval_densenet201_student.py      # DenseNet student evaluation
+│   ├── distill_densenet201_student.py   # DenseNet ensemble → ResNet18 RGB student
+│   ├── eval_resnet18_student.py         # Student evaluation (flexible --checkpoint arg)
+│   ├── export_student_resnet18.py       # Export student to ONNX (flexible args)
 │   ├── checkpoints/
-│   │   ├── student_resnet18_best.pth    # Best student checkpoint
-│   │   ├── student_resnet18_last.pth    # Latest student checkpoint
-│   │   └── kd_history.json              # Distillation training history
+│   │   ├── resnet18_to_resnet18/        # ResNet18→ResNet18 distillation checkpoints
+│   │   │   ├── student_resnet18_best.pth
+│   │   │   ├── student_resnet18_last.pth
+│   │   │   └── kd_history.json
+│   │   └── densenet201_to_resnet18/     # DenseNet201→ResNet18 distillation checkpoints
+│   │       ├── student_resnet18_from_densenet201_best.pth
+│   │       ├── student_resnet18_from_densenet201_last.pth
+│   │       └── kd_history_densenet201_resnet18.json
 │   ├── requirements.txt
 │   └── README.md
 │
-├── deployment/                     # Edge AI deployment (Axelera Metis)
-│   ├── prepare_lcz42_voyager_dataset.py # Convert H5 → PNG (Voyager format)
-│   ├── compute_lcz42_mu_sigma.py        # Compute normalization statistics (μ/σ)
+├── fusion_ensembles_no_SR/         # DenseNet201 + TDA fusion (baseline only, NO SR)
+│   ├── scripts/
+│   │   ├── train_teacher_fusion.py      # Training orchestrator (10 baseline members)
+│   │   ├── rand_fusion.py               # Baseline training (no SR enhancement)
+│   │   ├── fusion_densenet201.py        # TDAFusionDenseNet201 model
+│   │   └── dataset_reading.py           # HDF5 dataloader
+│   ├── models/trained/                  # Trained fusion checkpoints
+│   ├── results/                         # Evaluation metrics and training logs
+│   └── README.md
+│
+├── fusion_ensembles_no_TDA/        # DenseNet201 with Super-Resolution (NO TDA)
+│   ├── scripts/
+│   │   ├── train_teacher_fusion.py      # Training orchestrator (all SR variants)
+│   │   ├── rand_fusion.py               # Standard DenseNet201 training
+│   │   ├── fusion_densenet201.py        # Standard DenseNet201MS model
+│   │   └── dataset_reading.py           # HDF5 dataloader
+│   ├── models/trained/                  # Trained checkpoints
+│   ├── results/                         # Evaluation metrics and training logs
+│   └── README.md
+│
+├── fusion_ensembles/               # DenseNet201 + SR + TDA (full fusion)
+│   ├── scripts/
+│   │   ├── train_teacher_fusion.py      # Main fusion training orchestrator
+│   │   ├── rand_fusion.py               # Fusion trainer with SR + TDA
+│   │   ├── fusion_densenet201.py        # TDAFusionDenseNet201 model
+│   │   └── dataset_reading.py           # HDF5 dataloader
+│   ├── models/trained/                  # Fusion checkpoints for all SR variants
+│   ├── results/                         # Fusion training logs and metrics
+│   └── README.md
+│
+├── voyager_sdk/                    # Edge AI deployment (Axelera Metis)
 │   ├── eval_lcz42_png.py                # Evaluate student on PNG dataset
-│   ├── export_fusion_to_onnx.py         # Export TDA-fusion models to ONNX
-│   ├── test_fusion_onnx.py              # Verify ONNX inference correctness
-│   ├── data/LCZ42/
-│   │   ├── repr/                        # Calibration images (30/class, 510 total)
-│   │   ├── val/                         # Validation images (200/class, 3,400 total)
+│   ├── prepare_lcz42_voyager_deployment.py # Convert H5 → PNG (Voyager format)
+│   ├── resnet18-imagenet-onnx.yaml      # Axelera Metis deployment config
+│   ├── data/LCZ42/                      # Voyager dataset format
+│   │   ├── calibration/                 # Calibration images (30/class, 510 total)
+│   │   ├── validation/                  # Validation images (200/class, 3,400 total)
 │   │   └── labels.txt                   # 17 LCZ class names
 │   └── README.md
 │
@@ -443,54 +476,66 @@ Expected output:
 [RESULT] Test accuracy: -- % (--/--)
 ```
 
-### **9. Local Test Deployment **
+### **9. Export Student to ONNX**
 
 ```bash
-cd ../deployment
+cd distillation
 
-# Step 1: Compute normalization statistics (μ/σ)
-python compute_lcz42_mu_sigma.py
+# Export ResNet18→ResNet18 student (default)
+python export_student_resnet18.py
 
-# Step 2: Convert H5 to PNG format
-python prepare_lcz42_voyager_dataset.py
+# Or export DenseNet201→ResNet18 student
+python export_student_resnet18.py \
+  --checkpoint checkpoints/densenet201_to_resnet18/student_resnet18_from_densenet201_best.pth \
+  --output checkpoints/densenet201_to_resnet18/student_resnet18_from_densenet201_rgb.onnx
+```
 
-# Step 3: Validate on PNG dataset
+### **10. Evaluate Student on PNG Dataset**
+
+```bash
+cd ../voyager_sdk
+
+# Convert HDF5 to Voyager PNG format
+python prepare_lcz42_voyager_deployment.py
+
+# Evaluate student on PNG dataset
 python eval_lcz42_png.py
 ```
 
 **Output structure**:
 ```
-deployment/data/LCZ42/
-├── repr/                  # 510 calibration images (30/class)
+voyager_sdk/data/LCZ42/
+├── calibration/               # 510 calibration images (30/class) for INT8 quantization
 │   ├── class01_00000.png
 │   ├── class01_00001.png
 │   └── ...
-├── val/                   # 3,400 validation images (200/class)
+├── validation/                # 3,400 validation images (200/class)
 │   ├── 01_CompactHighRise/
 │   │   ├── 000001.png
 │   │   └── ...
 │   ├── 02_CompactMidRise/
 │   └── ...
-└── labels.txt             # 17 LCZ class names
+└── labels.txt                 # 17 LCZ class names
 ```
 
-### **10. Export to ONNX**
+### **11. Deploy to Axelera Metis**
+
+The ONNX model is now ready for deployment on **Axelera Metis AI accelerator**:
 
 ```bash
-python export_student_resnet18.py  # Exports student to ONNX (Opset 17)
-```
+# Copy student ONNX to Voyager SDK
+cp ../distillation/checkpoints/resnet18_to_resnet18/student_resnet18_rgb.onnx \
+   customers/mymodels/
 
-The ONNX model is now ready for deployment on **Axelera Metis AI accelerator** with INT8 quantization using the Voyager calibration dataset.
-
-### **11. Final setup for Voyager SDK**
-
-```bash
-cd ../voyager_sdk
-python prepare_lcz42_voyager_dataset.py  # create the final correct data/LCZ42 for Voyager sdk
+# Deploy using Voyager SDK with the provided config file
+# (resnet18-imagenet-onnx.yaml)
 ```
 
 > **Note**
-> In the folder you can find also an example of the .yaml file for the correct deploy. You will need to also import the .onnx model for the weights in customers/mymodels/ together with this .yaml and the LCZ42 in data/.
+> The Voyager SDK configuration (`resnet18-imagenet-onnx.yaml`) specifies:
+> - INT8 quantization using calibration images (30/class, 510 total)
+> - Input preprocessing: Z-score normalization with paper-faithful scaling
+> - Batch inference for real-time performance
 
 ---
 
@@ -508,7 +553,7 @@ python prepare_lcz42_voyager_dataset.py  # create the final correct data/LCZ42 f
 | DenseNet201 | 10 RANDRGB | 72.21% | 72.04% | 72.21% | 70.25% |
 | DenseNet201 | 10 SAR | 72.82% | 73.17% | 72.81% | 70.62% |
 | DenseNet201 | 30 ALL | **73.62%** | 73.87% | 73.51% | 71.32% |
-| Fusion | ALL | -- | --% | --% | --% |
+| Fusion | ALL | 73.45 | -- | -- | -- |
 
 ### **Knowledge Distillation Results**
 

@@ -12,31 +12,40 @@ from sklearn.metrics import classification_report, confusion_matrix
 
 from dataset_reading import DatasetReading
 from enable_gpu import enable_gpu
-from rand_fusion import train_fusion_member
+from rand_fusion import train_rand_fusion
 from utils_results import save_h5_results
 
 # ---------------- Configuration ---------------- #
 SEED = 42
 DATA_ROOT = "../../data/lcz42"
-TDA_ROOT = "../../tda/data"
 SAVE_DIR = "../models/trained"
 EPOCHS = 12
-BATCH_SIZE = 128  # 512 overflowed with fusion inputs; keep 128 for stability
+BATCH_SIZE = 512  # No TDA, can use larger batch size
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-LABEL_SMOOTHING = 0.1
 USE_ZSCORE = True
 USE_SAR_DESPECKLE = True
 USE_AUG = True
-NUM_WORKERS = 8
-USE_TORCH_COMPILE = False  # Set to True to enable torch.compile (experimental on PyTorch 2.0.1)
-# NOTE: If running multiple jobs in parallel on NFS/NAS, reduce NUM_WORKERS to 2-4 to avoid I/O conflicts
+NUM_WORKERS = 6
 OPTIMIZER_NAME = "SGD(momentum=0.9)"
 SCHEDULER_NAME = "None"
 
-# No SR methods — always use baseline data for all 10 ensemble members
-# Diversity comes from: seeds, band selection, TDA augmentation
-NUM_ENSEMBLE_MEMBERS = 10
+# Super-Resolution methods (10 members per mode)
+METHODS_MS = [
+    ("", "baseline1"),
+    ("", "baseline2"),
+    ("_vdsr2x", "vdsr2x"),
+    ("_edsr2x", "edsr2x"),
+    ("_esrgan2x", "esrgan2x"),
+    ("_edsr4x", "edsr4x"),
+    ("_swinir2x", "swinir2x"),
+    ("_vdsr3x", "vdsr3x"),
+    ("_bsrnet2x", "bsrnet2x"),
+    ("_realesrgan4x", "realesrgan4x"),
+]
+
+METHODS_SAR = list(METHODS_MS)
+
 
 # ---------------- Utilities ---------------- #
 def setup_seed(seed: int = 42):
@@ -96,7 +105,7 @@ def _compute_sumrule(
 
     classes = [str(c) for c in outputs[0]["classes"]]
     y_true = outputs[0]["y_true"]
-    probs_stack = np.stack([out["probs"] for out in outputs], axis=0)
+    probs_stack = np.stack([out["scores_avg"] for out in outputs], axis=0)
 
     for out in outputs[1:]:
         if not np.array_equal(out["y_true"], y_true):
@@ -121,7 +130,7 @@ def _compute_sumrule(
 
     summary = {
         "model_name": tag,
-        "architecture": "FusionDenseNet201",
+        "architecture": "DenseNet201 (SR-based)",
         "components": extra_components,
         "final_top1": float(top1),
         "accuracy": float(report.get("accuracy", top1)),
@@ -160,9 +169,9 @@ def _compute_sumrule(
     return summary
 
 
-# ---------------- Main training loop ---------------- #
+# ============================================ Main ============================================ #
 def train_teacher_fusion(mode="ALL"):
-    print("\n[INFO] Starting Fusion Teacher Training (DenseNet201)")
+    print("\n[INFO] Starting Fusion Teacher Training (DenseNet201, SR-based, no TDA)")
     setup_seed(SEED)
     device = enable_gpu(0)
     print(f"[INFO] Using device: {device}")
@@ -186,17 +195,15 @@ def train_teacher_fusion(mode="ALL"):
         resizeTo=(224, 224),
     )
 
-    ensemble_outputs: Dict[str, List[Dict]] = {}
+    ensemble_results: Dict[str, List[Dict]] = {}
 
     for current_mode in modes_to_run:
+        methods = METHODS_MS if current_mode in {"RAND", "RANDRGB"} else METHODS_SAR
         mode_dir = os.path.join("../results", current_mode.lower())
-        outputs_for_mode: List[Dict] = []
+        results_for_mode: List[Dict] = []
 
-        print(f"\n=== Training Fusion Mode: {current_mode} ===")
-        for member_idx in range(1, NUM_ENSEMBLE_MEMBERS + 1):
-            suffix = ""  # Always baseline — no SR variants
-            tag = f"Member_{member_idx:02d}"
-
+        print(f"\n=== Training Fusion Mode: {current_mode} (SR-based) ===")
+        for member_idx, (suffix, tag) in enumerate(methods, start=1):
             table_path = os.path.join(DATA_ROOT, f"tables_MS{suffix}.mat")
             if not os.path.exists(table_path):
                 print(f"[WARN] Missing table file {table_path}, skipping member {member_idx}")
@@ -221,9 +228,6 @@ def train_teacher_fusion(mode="ALL"):
                 cfg_sar["testTable"] = sar_test_table
                 dsTrSAR, dsTeSAR, _ = DatasetReading(cfg_sar)
 
-            tda_train_path = os.path.join(TDA_ROOT, f"tda_MS_features{suffix}.h5")
-            tda_test_path = os.path.join(TDA_ROOT, f"tda_MS_features_test{suffix}.h5")
-
             cfgT = dict(
                 dsTrain=dsTrMS,
                 dsTest=dsTeMS,
@@ -232,29 +236,23 @@ def train_teacher_fusion(mode="ALL"):
                 miniBatchSize=BATCH_SIZE,
                 learnRate=LEARNING_RATE,
                 weightDecay=WEIGHT_DECAY,
-                labelSmoothing=LABEL_SMOOTHING,
                 rngSeed=SEED,
                 numWorkers=NUM_WORKERS,
-                useTorchCompile=USE_TORCH_COMPILE,
                 device=device,
-                tdaTrainPath=tda_train_path,
-                tdaTestPath=tda_test_path,
-                mode=current_mode,
-                memberID=member_idx,
-                suffix=tag,
             )
 
             if current_mode == "SAR":
-                cfgT["dsTrainSAR"] = dsTrSAR
-                cfgT["dsTestSAR"] = dsTeSAR
+                # For SAR, pass SAR datasets but still use single member training
+                # (not doing MS+SAR fusion at the training level, just standard DenseNet201)
+                pass
 
             start_time = time.time()
-            result = train_fusion_member(cfgT)
+            result = train_rand_fusion(cfgT)
             elapsed = time.time() - start_time
 
-            model = result["model"]
+            ensemble = result["ensemble"]
             history = result["history"]
-            top1 = result["top1"]
+            top1 = result["test_top1"]
             cm = result["confusion_mat"]
             y_true = result["y_true"]
             y_pred = result["y_pred"]
@@ -262,7 +260,7 @@ def train_teacher_fusion(mode="ALL"):
 
             model_name = f"fusion_densenet201_{current_mode.lower()}_{tag}"
             model_path = os.path.join(SAVE_DIR, f"{model_name}.pth")
-            torch.save(model.state_dict(), model_path)
+            torch.save(ensemble.state_dict(), model_path)
 
             report = classification_report(
                 y_true,
@@ -276,17 +274,16 @@ def train_teacher_fusion(mode="ALL"):
             macro_avg = report.get("macro avg", {})
             weighted_avg = report.get("weighted avg", {})
 
-            bands_info = result["bands"]
             summary = {
                 "model_name": model_name,
-                "architecture": "FusionDenseNet201",
+                "architecture": "DenseNet201 (SR-based)",
                 "mode": current_mode,
+                "sr_method": tag,
                 "member_id": member_idx,
                 "epochs": EPOCHS,
                 "batch_size": BATCH_SIZE,
                 "learning_rate": LEARNING_RATE,
                 "weight_decay": WEIGHT_DECAY,
-                "label_smoothing": LABEL_SMOOTHING,
                 "optimizer": OPTIMIZER_NAME,
                 "scheduler": SCHEDULER_NAME,
                 "final_top1": float(top1),
@@ -301,10 +298,6 @@ def train_teacher_fusion(mode="ALL"):
                 "num_classes": len(classes),
                 "device": str(device),
                 "seed": SEED,
-                "selected_ms_bands": bands_info.get("ms"),
-                "selected_sar_band": bands_info.get("sar"),
-                "class_counts": infoMS.get("classCounts").tolist() if "classCounts" in infoMS else None,
-                "class_weights": infoMS.get("classWeights").tolist() if "classWeights" in infoMS else None,
             }
 
             save_h5_results(
@@ -320,40 +313,40 @@ def train_teacher_fusion(mode="ALL"):
                     "summary": json.dumps(summary),
                     "classification_report": json.dumps(report),
                 },
-                probs=result["probs"],
+                probs=result["scores_avg"],
             )
 
             pd.DataFrame(history).to_csv(os.path.join(mode_dir, f"{model_name}_history.csv"), index=False)
             with open(os.path.join(mode_dir, f"{model_name}_summary.json"), "w") as f:
                 json.dump(summary, f, indent=2)
 
-            outputs_for_mode.append(result)
+            results_for_mode.append(result)
             print(f"[✓] {current_mode} member {member_idx:02d} ({tag}) — Top-1: {top1:.4f}")
 
-        if outputs_for_mode:
-            ensemble_outputs[current_mode] = outputs_for_mode
+        if results_for_mode:
+            ensemble_results[current_mode] = results_for_mode
             sumrule_name = f"fusion_densenet201_{current_mode.lower()}_sumrule"
             _compute_sumrule(
                 sumrule_name,
-                outputs_for_mode,
+                results_for_mode,
                 mode_dir,
                 SEED,
-                [f"{current_mode}_{idx+1}" for idx in range(len(outputs_for_mode))],
+                [f"{current_mode}_{idx+1}" for idx in range(len(results_for_mode))],
             )
 
     # Cross-mode sum rule (RAND + RANDRGB + SAR)
     required_modes = {"RAND", "RANDRGB", "SAR"}
-    if required_modes.issubset(ensemble_outputs.keys()):
-        all_outputs = []
+    if required_modes.issubset(ensemble_results.keys()):
+        all_results = []
         component_tags = []
         for mode_name in ["RAND", "RANDRGB", "SAR"]:
-            all_outputs.extend(ensemble_outputs[mode_name])
-            component_tags.extend([f"{mode_name}_{idx+1}" for idx in range(len(ensemble_outputs[mode_name]))])
+            all_results.extend(ensemble_results[mode_name])
+            component_tags.extend([f"{mode_name}_{idx+1}" for idx in range(len(ensemble_results[mode_name]))])
 
         fusion_dir = os.path.join("../results", "fusion")
         _compute_sumrule(
             "fusion_densenet201_full_sumrule",
-            all_outputs,
+            all_results,
             fusion_dir,
             SEED,
             component_tags,

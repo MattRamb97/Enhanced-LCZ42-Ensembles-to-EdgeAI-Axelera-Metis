@@ -118,10 +118,19 @@ def train_fusion_member(cfg: Dict):
     else:
         raise ValueError(f"Unsupported fusion mode '{mode}'")
 
-    with h5py.File(cfg["tdaTrainPath"], "r") as f:
+    # For SAR mode, use SAR-specific TDA features; for others use MS features
+    tda_train_path = cfg["tdaTrainPath"]
+    tda_test_path = cfg["tdaTestPath"]
+    if mode == "SAR":
+        # Replace MS with SAR in the TDA file paths
+        tda_train_path = tda_train_path.replace("tda_MS_features", "tda_SAR_features")
+        tda_test_path = tda_test_path.replace("tda_MS_features_test", "tda_SAR_features_test")
+        print(f"[SAR] Using SAR-specific TDA features from {tda_train_path}")
+
+    with h5py.File(tda_train_path, "r") as f:
         tda_key = list(f.keys())[0]
         tda_train = f[tda_key][:]
-    with h5py.File(cfg["tdaTestPath"], "r") as f:
+    with h5py.File(tda_test_path, "r") as f:
         tda_key = list(f.keys())[0]
         tda_test = f[tda_key][:]
     print(f"[{mode}] TDA feature shapes — train: {tda_train.shape}, test: {tda_test.shape}")

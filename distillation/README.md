@@ -95,7 +95,7 @@ Teacher (RAND ResNet18 Ensemble, 10 members)
 ```
 
 **Output**:
-- Checkpoint: `checkpoints/resnet18_to_resnet18/student_resnet18_from_resnet18_last.pth`
+- Checkpoint: `checkpoints/resnet18_to_resnet18/student_resnet18_last.pth`
 - Metrics: Per-epoch train/val loss and accuracy logged to stdout
 
 ---
@@ -156,7 +156,8 @@ student.fc = nn.Linear(student.fc.in_features, NUM_CLASSES)
 - Consistent evaluation in eval_densenet201_student.py
 
 **Output**:
-- Checkpoint: `checkpoints/densenet201_to_resnet18/student_resnet18_from_densenet201_last.pth`
+- Best checkpoint: `checkpoints/densenet201_to_resnet18/student_resnet18_from_densenet201_best.pth`
+- Last checkpoint: `checkpoints/densenet201_to_resnet18/student_resnet18_from_densenet201_last.pth`
 - Training curves saved to stdout
 
 ---

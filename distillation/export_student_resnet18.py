@@ -1,6 +1,5 @@
 """
 Export the distilled ResNet18 student to ONNX for Voyager/Axelera Metis deployment.
-
 """
 
 from __future__ import annotations
@@ -16,8 +15,8 @@ from torchvision.models import resnet18
 # Configuration (hardcoded defaults, overridable via argparse)
 # --------------------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-CHECKPOINT_PATH = BASE_DIR / "checkpoints" / "student_resnet18_last.pth"
-OUTPUT_PATH = BASE_DIR / "checkpoints" / "student_resnet18_rgb.onnx"
+CHECKPOINT_PATH = BASE_DIR / "checkpoints" / "resnet18_to_resnet18" / "student_resnet18_last.pth"
+OUTPUT_PATH = BASE_DIR / "checkpoints" / "resnet18_to_resnet18" / "student_resnet18_rgb.onnx"
 
 NUM_CLASSES = 17
 OPSET_VERSION = 17  # Axelera Metis requires opset 17
@@ -79,13 +78,13 @@ if __name__ == "__main__":
         "--checkpoint",
         type=Path,
         default=CHECKPOINT_PATH,
-        help="Path to student checkpoint (default: resnet18_to_resnet18/student_resnet18_last.pth)",
+        help="Path to student checkpoint (default: checkpoints/resnet18_to_resnet18/student_resnet18_last.pth)",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=OUTPUT_PATH,
-        help="Path to output ONNX file (default: checkpoints/student_resnet18_rgb.onnx)",
+        help="Path to output ONNX file (default: checkpoints/resnet18_to_resnet18/student_resnet18_rgb.onnx)",
     )
     args = parser.parse_args()
     main(checkpoint_path=args.checkpoint, output_path=args.output)

@@ -18,7 +18,7 @@ from utils_results import save_h5_results
 # ---------------- Configuration ---------------- #
 SEED = 42
 DATA_ROOT = "../../data/lcz42"
-TDA_ROOT = "../../TDA/data"
+TDA_ROOT = "../../tda/data"
 SAVE_DIR = "../models/trained"
 EPOCHS = 12
 BATCH_SIZE = 128  # 512 overflowed with fusion inputs; keep 128 for stability

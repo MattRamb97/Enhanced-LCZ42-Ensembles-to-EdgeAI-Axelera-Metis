@@ -1,6 +1,5 @@
 """
 Evaluate the distilled ResNet18 student on the Voyager PNG dataset (LCZ42).
-
 """
 
 from __future__ import annotations
@@ -21,11 +20,9 @@ from tqdm import tqdm
 # --------------------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 VAL_ROOT = BASE_DIR / "data" / "LCZ42" / "val"
-CHECKPOINT_PATH = BASE_DIR.parent / "distillation" / "checkpoints" / "densenet201_to_resnet18" / "student_resnet18_from_densenet201_last.pth"
+CHECKPOINT_PATH = BASE_DIR.parent / "distillation" / "checkpoints" / "resnet18_to_resnet18" / "student_resnet18_last.pth"
 
-# μ/σ from DenseNet201→ResNet18 distillation training on RGB channels
-# After paper scaling on 224x224 resized data
-# RGB channels in order: [B4, B3, B2]
+# μ/σ from distillation training on RGB channels
 MU = torch.tensor([9.206003189086914, 9.952054977416992, 11.270723342895508], dtype=torch.float32)
 SIGMA = torch.tensor([6.044061660766602, 4.3512349128723145, 3.605332136154175], dtype=torch.float32)
 
@@ -36,13 +33,6 @@ NUM_CLASSES = 17
 
 
 def preprocess_png(path: str) -> torch.Tensor:
-    """Load 32x32 paper-scaled PNG and prepare for ResNet18.
-
-    Pipeline (matching dataset_reading.py behavior):
-    1. Load 32x32 uint8 PNG (already paper-scaled [0, 255])
-    2. Apply z-score normalization with pre-computed μ/σ (on 32x32)
-    3. Resize to 224x224 (required by ResNet18 input)
-    """
     img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise FileNotFoundError(f"Image not found: {path}")
@@ -152,7 +142,7 @@ if __name__ == "__main__":
         "--checkpoint",
         type=Path,
         default=CHECKPOINT_PATH,
-        help="Path to student checkpoint (default: distillation/checkpoints/densenet201_to_resnet18/student_resnet18_from_densenet201_last.pth)",
+        help="Path to student checkpoint (default: ../distillation/checkpoints/resnet18_to_resnet18/student_resnet18_last.pth)",
     )
     args = parser.parse_args()
     main(checkpoint_path=args.checkpoint)
