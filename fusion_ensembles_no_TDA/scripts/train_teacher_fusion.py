@@ -20,7 +20,7 @@ SEED = 42
 DATA_ROOT = "../../data/lcz42"
 SAVE_DIR = "../models/trained"
 EPOCHS = 12
-BATCH_SIZE = 512  # No TDA, can use larger batch size
+BATCH_SIZE = 128  
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
 USE_ZSCORE = True
@@ -105,7 +105,7 @@ def _compute_sumrule(
 
     classes = [str(c) for c in outputs[0]["classes"]]
     y_true = outputs[0]["y_true"]
-    probs_stack = np.stack([out["scores_avg"] for out in outputs], axis=0)
+    probs_stack = np.stack([out["probs"] for out in outputs], axis=0)
 
     for out in outputs[1:]:
         if not np.array_equal(out["y_true"], y_true):
@@ -239,20 +239,21 @@ def train_teacher_fusion(mode="ALL"):
                 rngSeed=SEED,
                 numWorkers=NUM_WORKERS,
                 device=device,
+                mode=current_mode,
+                memberID=member_idx,
             )
 
             if current_mode == "SAR":
-                # For SAR, pass SAR datasets but still use single member training
-                # (not doing MS+SAR fusion at the training level, just standard DenseNet201)
-                pass
+                cfgT["dsTrainSAR"] = dsTrSAR
+                cfgT["dsTestSAR"] = dsTeSAR
 
             start_time = time.time()
             result = train_rand_fusion(cfgT)
             elapsed = time.time() - start_time
 
-            ensemble = result["ensemble"]
+            model = result["model"]
             history = result["history"]
-            top1 = result["test_top1"]
+            top1 = result["top1"]
             cm = result["confusion_mat"]
             y_true = result["y_true"]
             y_pred = result["y_pred"]
@@ -260,7 +261,7 @@ def train_teacher_fusion(mode="ALL"):
 
             model_name = f"fusion_densenet201_{current_mode.lower()}_{tag}"
             model_path = os.path.join(SAVE_DIR, f"{model_name}.pth")
-            torch.save(ensemble.state_dict(), model_path)
+            torch.save(model.state_dict(), model_path)
 
             report = classification_report(
                 y_true,
@@ -313,7 +314,7 @@ def train_teacher_fusion(mode="ALL"):
                     "summary": json.dumps(summary),
                     "classification_report": json.dumps(report),
                 },
-                probs=result["scores_avg"],
+                probs=result["probs"],
             )
 
             pd.DataFrame(history).to_csv(os.path.join(mode_dir, f"{model_name}_history.csv"), index=False)
